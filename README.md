@@ -42,11 +42,8 @@ To mitigate this limitation, we also propose 3DGUT, which enables support for di
   - [To visualize training progress interactively](#to-visualize-training-progress-interactively)
   - [To visualize a pre-trained checkpoint](#to-visualize-a-pre-trained-checkpoint)
 - [📋 4. Evaluations](#-4-evaluations)
-  - [3DGRT](#3dgrt)
-    - [MipNeRF360 Dataset](#mipnerf360-dataset)
-  - [3DGUT](#3dgut)
-    - [MipNeRF360 Dataset](#mipnerf360-dataset-1)
-    - [Scannet++ Dataset](#scannet-dataset)
+  - [3DGRT](#grt-benchmark)
+  - [3DGUT](#gut-benchmark)
 - [🛝 5. Interactive Playground GUI](#-5-interactive-playground-gui)
 - [🎓 6. Citations](#-6-citations)
 - [🙏 7. Acknowledgements](#-7-acknowledgements)
@@ -76,7 +73,7 @@ Then run the install script with the optional `WITH_GCC11` flag, which additiona
 <summary> NOTE: Blackwell GPU support</summary>
 </br>
 The current codebase uses CUDA 11.8, which is not compatible with the new Blackwell GPUs (e.g., RTX 5090) or GPUs with compute capability 10.0+.
-An experimental build script has been kindly implemented by [@johnnynunez] (https://www.github.com/johnnynunez) to support Blackwell GPUs. To enable it:
+An experimental build script has been kindly implemented by <a href="https://www.github.com/johnnynunez">@johnnynunez</a> to support Blackwell GPUs. To enable it:
 
 Run the install script with both the `WITH_GCC11` flag and a CUDA version. Currently, only CUDA 12.8.1 is supported:
 ```sh
@@ -182,8 +179,9 @@ bash ./benchmark/mipnerf360_3dgut_render.sh <results-folder>
 ```
 
 <details>
-<summary><strong>3DGRT Results Produced on RTX 5090</strong></summary>
+<summary><strong><a name="grt-benchmark">3DGRT Results Produced on RTX 5090</a></strong></summary>
 <br/>
+
 
 **NeRF Synthetic Dataset**
 
@@ -203,6 +201,7 @@ bash ./benchmark/nerf_synthetic_render.sh results/nerf_synthetic
 | Mic        | 35.90	| 0.992	| 443.4	| 291 |
 | Ship       | 31.73	| 0.909	| 510.7	| 360 |
 | *Average*  | 33.87	| 0.971	| 479.3	| 347 |
+
 
 **MipNeRF360 Dataset**
 
@@ -227,7 +226,7 @@ bash ./benchmark/mipnerf360_render.sh results/mipnerf360
 
 
 <details>
-<summary><strong>3DGUT Results Produced on RTX 5090</strong></summary>
+<summary><strong><a name="gut-benchmark">3DGUT Results Produced on RTX 5090</a></strong></summary>
 <br/>
 
 **NeRF Synthetic Dataset**
@@ -249,6 +248,7 @@ bash ./benchmark/nerf_synthetic_render.sh results/nerf_synthetic
 | Ship       | 31.72	| 0.908	| 208.5	| 870  |
 | *Average*  | 33.88	| 0.970	| 214.6	| 846  |
 
+
 **MipNeRF360 Dataset**
 
 ```bash
@@ -268,6 +268,7 @@ bash ./benchmark/mipnerf360_render.sh results/mipnerf360
 | Stump     | 26.50	| 0.773	| 742.6	| 319 |
 | Treehill  | 22.35	| 0.627	| 809.6	| 299 |
 | *Average* | 27.43	| 0.815	| 686.4	| 317 |
+
 
 **Scannet++ Dataset**
 
