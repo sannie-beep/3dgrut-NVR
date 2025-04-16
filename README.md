@@ -16,19 +16,19 @@ To mitigate this limitation, we also propose 3DGUT, which enables support for di
 > [Nicolas Moenne-Loccoz*](https://www.linkedin.com/in/nicolas-moënne-loccoz-71040512/?original_referer=https%3A%2F%2Fwww%2Egoogle%2Ecom%2F&originalSubdomain=ca), [Ashkan Mirzaei*](https://ashmrz.github.io), [Or Perel](https://orperel.github.io/), [Riccardo De Lutio](https://riccardodelutio.github.io/), [Janick Martinez Esturo](https://jme.pub/),   
 > [Gavriel State](https://www.linkedin.com/in/gavstate/?originalSubdomain=ca), [Sanja Fidler](https://www.cs.utoronto.ca/~fidler/), [Nicholas Sharp^](https://nmwsharp.com/), [Zan Gojcic^](https://zgojcic.github.io/) _(*,^ indicates equal contribution)_  
 > _SIGGRAPH Asia 2024 (Journal Track)_  
-> __[Project page](https://research.nvidia.com/labs/toronto-ai/3DGRT)&nbsp;/ [Paper](https://research.nvidia.com/labs/toronto-ai/3DGRT/res/3dgrt_compressed.pdf)&nbsp;/ [Video](https://research.nvidia.com/labs/toronto-ai/3DGRT/res/3dgrt_supplementary_video.mp4)&nbsp;/ [BibTeX](/-/raw/release/assets/3dgrt2024.bib)__
+> __[Project page](https://research.nvidia.com/labs/toronto-ai/3DGRT)&nbsp;/ [Paper](https://research.nvidia.com/labs/toronto-ai/3DGRT/res/3dgrt_compressed.pdf)&nbsp;/ [Video](https://research.nvidia.com/labs/toronto-ai/3DGRT/res/3dgrt_supplementary_video.mp4)&nbsp;/ [BibTeX](assets/3dgrt2024.bib)__
 
 > __3DGUT: Enabling Distorted Cameras and Secondary Rays in Gaussian Splatting__  
 > [Qi Wu*](https://wilsoncernwq.github.io/), [Janick Martinez Esturo*](https://jme.pub/), [Ashkan Mirzaei](https://ashmrz.github.io),   
 > [Nicolas Moenne-Loccoz](https://www.linkedin.com/in/nicolas-moënne-loccoz-71040512/?original_referer=https%3A%2F%2Fwww%2Egoogle%2Ecom%2F&originalSubdomain=ca), [Zan Gojcic](https://zgojcic.github.io/)  _(* indicates equal contribution)_  
 > _CVPR 2025 (Oral)_  
-> __[Project page](https://research.nvidia.com/labs/toronto-ai/3DGUT)&nbsp;/ [Paper](https://research.nvidia.com/labs/toronto-ai/3DGUT/res/3DGUT_ready_main.pdf)&nbsp;/ [Video](https://research.nvidia.com/labs/toronto-ai/3DGUT/#supp_video)&nbsp;/ [BibTeX](/-/raw/release/assets/3dgut2025.bib)__
+> __[Project page](https://research.nvidia.com/labs/toronto-ai/3DGUT)&nbsp;/ [Paper](https://research.nvidia.com/labs/toronto-ai/3DGUT/res/3DGUT_ready_main.pdf)&nbsp;/ [Video](https://research.nvidia.com/labs/toronto-ai/3DGUT/#supp_video)&nbsp;/ [BibTeX](assets/3dgut2025.bib)__
 
 
 ## 🔥 News
 - [][2025/04] Support for image masks.
 - [][2025/04] SparseAdam support.
-- [][2025/04] MCMC densification strategy support.
+- ✅[2025/04] MCMC densification strategy support.
 - ✅[2025/04] Stable release [v1.0.0](https://github.com/nv-tlabs/3dgrut/releases/tag/v1.0.0) tagged.
 - ✅[2025/03] Initial code release!
 - ✅[2025/02] [3DGUT](https://research.nvidia.com/labs/toronto-ai/3DGUT/res/3DGUT_ready_main.pdf) was accepted to CVPR 2025!
@@ -45,8 +45,6 @@ To mitigate this limitation, we also propose 3DGUT, which enables support for di
   - [To visualize training progress interactively](#to-visualize-training-progress-interactively)
   - [To visualize a pre-trained checkpoint](#to-visualize-a-pre-trained-checkpoint)
 - [📋 4. Evaluations](#-4-evaluations)
-  - [3DGRT](#grt-benchmark)
-  - [3DGUT](#gut-benchmark)
 - [🛝 5. Interactive Playground GUI](#-5-interactive-playground-gui)
 - [🎓 6. Citations](#-6-citations)
 - [🙏 7. Acknowledgements](#-7-acknowledgements)
@@ -137,7 +135,15 @@ python train.py --config-name apps/colmap_3dgrt.yaml path=data/mipnerf360/bonsai
 python train.py --config-name apps/colmap_3dgut.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_3dgut dataset.downsample_factor=2 
 
 # Train Scannet++
+python train.py --config-name apps/scannetpp_3dgrt.yaml path=data/scannetpp/0a5c013435/dslr out_dir=runs experiment_name=0a5c013435_3dgrt
 python train.py --config-name apps/scannetpp_3dgut.yaml path=data/scannetpp/0a5c013435/dslr out_dir=runs experiment_name=0a5c013435_3dgut
+```
+
+We also support MCMC densification strategy for 3DGRT and 3DGUT. To enable it, use the MCMC configuration:
+```bash
+# Train Bonsai
+python train.py --config-name apps/colmap_3dgrt_mcmc.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_3dgrt dataset.downsample_factor=2 
+python train.py --config-name apps/colmap_3dgut_mcmc.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_3dgut dataset.downsample_factor=2 
 ```
 
 > [!Note] 
@@ -254,6 +260,8 @@ bash ./benchmark/nerf_synthetic_render.sh results/nerf_synthetic
 
 **MipNeRF360 Dataset**
 
+GS Strategy, Unsorted
+
 ```bash
 bash ./benchmark/mipnerf360.sh paper/3dgut/unsorted_colmap.yaml
 bash ./benchmark/mipnerf360_render.sh results/mipnerf360
@@ -272,6 +280,25 @@ bash ./benchmark/mipnerf360_render.sh results/mipnerf360
 | Treehill  | 22.35	| 0.627	| 809.6	| 299 |
 | *Average* | 27.43	| 0.815	| 686.4	| 317 |
 
+
+MCMC Strategy, Unsorted
+
+```bash
+bash ./benchmark/mipnerf360.sh paper/3dgut/unsorted_colmap_mcmc.yaml
+bash ./benchmark/mipnerf360_render.sh results/mipnerf360
+```
+|           | PSNR  | SSIM	| Train (s) |	FPS |
+|-----------|-------|-------|-------|------|
+| Bicycle   | 25.31	| 0.765	| 502.3	| 361 |
+| Bonsai    | 32.51	| 0.947	| 670.6	| 274 |
+| Counter   | 29.40	| 0.916	| 752.7	| 254 |
+| Flowers   | 21.86	| 0.616	| 553.3	| 298 |
+| Garden    | 27.06	| 0.852	| 512.7	| 360 |
+| Kitchen   | 31.71	| 0.930	| 739.6	| 258 |
+| Room      | 32.04	| 0.928	| 643.7	| 313 |
+| Stump     | 27.06	| 0.795	| 487.0	| 339 |
+| Treehill  | 23.11	| 0.650	| 508.6	| 365 |
+| *Average* | 27.78	| 0.822	| 596.7	| 308 |
 
 **Scannet++ Dataset**
 
