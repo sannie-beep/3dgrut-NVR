@@ -27,7 +27,7 @@ To mitigate this limitation, we also propose 3DGUT, which enables support for di
 
 ## 🔥 News
 - ✅[2025/04] Support for image masks.
-- [][2025/04] SparseAdam support.
+- ✅[2025/04] SparseAdam support.
 - ✅[2025/04] MCMC densification strategy support.
 - ✅[2025/04] Stable release [v1.0.0](https://github.com/nv-tlabs/3dgrut/releases/tag/v1.0.0) tagged.
 - ✅[2025/03] Initial code release!
@@ -140,12 +140,22 @@ python train.py --config-name apps/scannetpp_3dgrt.yaml path=data/scannetpp/0a5c
 python train.py --config-name apps/scannetpp_3dgut.yaml path=data/scannetpp/0a5c013435/dslr out_dir=runs experiment_name=0a5c013435_3dgut
 ```
 
-We also support MCMC densification strategy for 3DGRT and 3DGUT. To enable it, use the MCMC configuration:
+We also support MCMC densification strategy and selective Adam optimizer for 3DGRT and 3DGUT. 
+
+To enable MCMC, use:
 ```bash
-# Train Bonsai
 python train.py --config-name apps/colmap_3dgrt_mcmc.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_3dgrt dataset.downsample_factor=2 
 python train.py --config-name apps/colmap_3dgut_mcmc.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_3dgut dataset.downsample_factor=2 
 ```
+
+To enable selective Adam, use:
+```bash
+python train.py --config-name apps/colmap_3dgrt.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_3dgrt dataset.downsample_factor=2 optimizer.type=selective_adam
+python train.py --config-name apps/colmap_3dgut.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_3dgut dataset.downsample_factor=2 optimizer.type=selective_adam
+```
+
+If you use MCMC and Selective Adam in your research, please cite [3dgs-mcmck](https://github.com/ubc-vision/3dgs-mcmc), [taming-3dgs](https://github.com/humansensinglab/taming-3dgs),
+and [gSplat](https://github.com/nerfstudio-project/gsplat/tree/main) library from which the code was adopted (links to the code are provided in the source files).
 
 > [!Note] 
 > For ScanNet++, we expect the dataset to be preprocessed following [FisheyeGS](https://github.com/zmliao/Fisheye-GS?tab=readme-ov-file#prepare-training-data-on-scannet-dataset)'s method.
@@ -307,6 +317,24 @@ bash ./benchmark/mipnerf360_render.sh results/mipnerf360
 | Stump     | 27.06	| 0.795	| 487.0	| 339 |
 | Treehill  | 23.11	| 0.650	| 508.6	| 365 |
 | *Average* | 27.78	| 0.822	| 596.7	| 308 |
+
+
+
+GS Strategy, Unsorted, Sparse Adam
+
+|           | PSNR   | SSIM  | Train (s) | FPS |
+|-----------|--------|-------|-----------|-----|
+| Bicycle   | 25.04  | 0.759 | 835.2     | -   |
+| Bonsai    | 32.63  | 0.945 | 457.1     | -   |
+| Counter   | 29.12  | 0.911 | 468.8     | -   |
+| Flowers   | 21.55  | 0.614 | 741.7     | -   |
+| Garden    | 27.12  | 0.855 | 757.4     | -   |
+| Kitchen   | 31.37  | 0.929 | 639.3     | -   |
+| Room      | 31.72  | 0.921 | 415.2     | -   |
+| Stump     | 26.58  | 0.774 | 695.7     | -   |
+| Treehill  | 22.30  | 0.625 | 749.8     | -   |
+| *Average* | 27.49  | 0.815 | 640.0     | -   |
+
 
 **Scannet++ Dataset**
 
