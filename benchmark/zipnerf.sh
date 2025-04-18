@@ -20,12 +20,12 @@ set -e
 
 CONFIG=$1
 if [[ -z $CONFIG ]]; then
-    echo "Configuration is not provided. Aborting execution."
+    echo "Error: Configuration is not provided. Aborting execution."
     echo "Usage: $0 <config-yaml>"
     exit 1
 fi
 
-RESULT_DIR=${RESULT_DIR:-"results/scannetpp"}
+RESULT_DIR=${RESULT_DIR:-"results/zipnerf"}
 EXTRA_ARGS=${@:2} # any extra arguments to pass to the script
 
 # if the result directory already exists, warn user and aport execution
@@ -35,19 +35,30 @@ if [ -d "$RESULT_DIR" ]; then
 fi
 
 mkdir -p $RESULT_DIR
-export TORCH_EXTENSIONS_DIR=$RESULT_DIR/.cache
+export TORCH_EXTENSIONS_DIR=$RESULT_DIR/.cache  # make sure we have a clean build
 
-SCENE_LIST="0a5c013435 8d563fc2cc bb87c292ad d415cc449b e8ea9b4da8 fe1733741f"
+SCENE_LIST="alameda berlin london nyc"
 
 for SCENE in $SCENE_LIST;
 do
+    DATA_FACTOR=8
+
     echo "Running: $SCENE, Configuration: $CONFIG"
 
-    # train without eval
-    nvidia-smi > $RESULT_DIR/train_$SCENE.log
+    # train on fisheye
+    nvidia-smi > $RESULT_DIR/train_fisheye_$SCENE.log
     CUDA_VISIBLE_DEVICES=0 python train.py --config-name $CONFIG \
         use_wandb=False with_gui=False out_dir=$RESULT_DIR \
-        path=data/scannetpp/$SCENE/dslr experiment_name=$SCENE \
-        $EXTRA_ARGS >> $RESULT_DIR/train_$SCENE.log
+        path=data/zipnerf/fisheye/$SCENE experiment_name=fisheye_$SCENE \
+        dataset.downsample_factor=$DATA_FACTOR \
+        $EXTRA_ARGS >> $RESULT_DIR/train_fisheye_$SCENE.log
+
+    # train on undistorted
+    nvidia-smi > $RESULT_DIR/train_undistorted_$SCENE.log
+    CUDA_VISIBLE_DEVICES=0 python train.py --config-name $CONFIG \
+        use_wandb=False with_gui=False out_dir=$RESULT_DIR \
+        path=data/zipnerf/undistorted/$SCENE experiment_name=undistorted_$SCENE \
+        dataset.downsample_factor=$DATA_FACTOR \
+        $EXTRA_ARGS >> $RESULT_DIR/train_undistorted_$SCENE.log
 
 done
