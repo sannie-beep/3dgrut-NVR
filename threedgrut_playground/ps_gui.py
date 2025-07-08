@@ -15,7 +15,11 @@
 
 from __future__ import annotations
 import copy
+import json
+import math
+from typing import List
 import numpy as np
+from threedgrut_playground.utils.distortion_camera import DistortionCamera
 import torch
 import os
 import kaolin
@@ -25,6 +29,7 @@ import traceback
 from threedgrut.utils.logger import logger
 from threedgrut.gui.ps_extension import initialize_cugl_interop
 from threedgrut_playground.utils.video_out import VideoRecorder
+from threedgrut_playground.utils.novel_view_renderer import NovelViewRenderer
 from threedgrut_playground.utils.kaolin_future.conversions import polyscope_from_kaolin_camera, polyscope_to_kaolin_camera
 from threedgrut_playground.engine import Engine3DGRUT, OptixPrimitiveTypes
 
@@ -48,8 +53,10 @@ class Playground:
         self.scene_mog = self.engine.scene_mog
         self.primitives = self.engine.primitives
         self.video_recorder = self.engine.video_recorder
+        self.novel_view_renderer = self.engine.novel_view_renderer
         self.video_h = 1080
         self.video_w = 1920
+       
 
         """ When this flag is toggled on, the state of the canvas have changed and it needs to be re-rendered """
         self.is_running = True
@@ -69,6 +76,8 @@ class Playground:
         self.viz_render_scalar_buffer = None
         self.viz_render_name = 'render'
         self.viz_render_enabled = True
+        self.selected_camera_idx = None
+        self.distortions = None  # Distortion coefficients for the camera, if any
 
         self.slice_planes = self.slice_plane_enabled = self.slice_plane_pos = self.slice_plane_normal = None
         self.init_polyscope(buffer_mode)
@@ -135,7 +144,7 @@ class Playground:
 
     @torch.cuda.nvtx.range("render_from_current_ps_view")
     @torch.no_grad()
-    def render_from_current_ps_view(self, window_w=None, window_h=None):
+    def render_from_current_ps_view(self, window_w=None, window_h=None, distortion=None):
         """ Render a frame using the polyscope gui camera and window size """
         if window_w is None or window_h is None:
             window_w, window_h = ps.get_window_size()
@@ -154,7 +163,7 @@ class Playground:
             if (last_window_size[0] != window_h) or (last_window_size[1] != window_w):
                 self.is_force_canvas_dirty = True
 
-        camera = polyscope_to_kaolin_camera(view_params, window_w, window_h, device=self.engine.device)
+        camera = polyscope_to_kaolin_camera(view_params, window_w, window_h, distortion_coefficients= distortion, device=self.engine.device)
         is_first_pass = self.is_dirty(camera)
         if not is_first_pass and not self.engine.has_progressive_effects_to_render():
             return self.engine.last_state['rgb'], self.engine.last_state['opacity']
@@ -177,8 +186,19 @@ class Playground:
         """ Renders a single pass using the polyscope camera and updates the polyscope canvas buffers
         with rendered information.
         """
-        window_w, window_h = ps.get_window_size()
+        # Get the current kaolin cam hfov and vfov
+        
 
+        window_w, window_h = ps.get_window_size()
+        if self.distortions:
+            distortions = self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None
+            camera = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+            # get the fx fy cx cy if the cam isnt fisheye
+            #print(f"CHECK 1 Distortions: {distortions} for camera {self.selected_camera_idx}")
+            if distortions[5] == 0.0:
+                intrinsics = self.novel_view_renderer.get_camera_intrinsics(self.selected_camera_idx) 
+                distortions = distortions + intrinsics
+                #print(f"EUFDBWVUBEWFUYI8V UIQERFWUVRN3QURIWV DISTORTION: {distortions} for camera {self.selected_camera_idx}")
         # re-initialize if needed
         style = self.viz_render_styles[self.viz_render_style_ind]
         if force or self.viz_curr_render_style_ind != self.viz_render_style_ind or self.viz_curr_render_size != (
@@ -221,7 +241,7 @@ class Playground:
 
         # do the actual rendering
         try:
-            sple_orad, sple_odns = self.render_from_current_ps_view()
+            sple_orad, sple_odns = self.render_from_current_ps_view(distortion=distortions if self.distortions else None)
             sple_orad = sple_orad[0]
             sple_odns = sple_odns[0]
         except Exception:
@@ -388,6 +408,15 @@ class Playground:
             settings_changed, self.engine.use_optix_denoiser = psim.Checkbox("Use Optix Denoiser", self.engine.use_optix_denoiser)
             self.is_force_canvas_dirty = self.is_force_canvas_dirty or settings_changed
 
+            psim.Text("Camera Coordinates:")
+            camera = ps.get_view_camera_parameters()
+            camera_pos = camera.get_position()
+            camera_rot = camera.get_R()
+            psim.PushItemWidth(100)
+            psim.Text(f"Position: [{camera_pos[0]:.2f}, {camera_pos[1]:.2f}, {camera_pos[2]:.2f}]")
+            psim.Text(f"Rotation: {camera_rot}")
+         
+
             psim.PopItemWidth()
             psim.TreePop()
 
@@ -471,8 +500,9 @@ class Playground:
                                                                            self.video_recorder.trajectory_output_path)
             if (psim.Button("Add Camera")):
                 camera = polyscope_to_kaolin_camera(
-                    ps.get_view_camera_parameters(), width=self.video_w, height=self.video_h
+                    ps.get_view_camera_parameters(), width=self.video_w, height=self.video_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
                 )
+                print(f"JFBERVIWQB4THVE Added to trajectory w dist:{camera.distortion_coefficients}")
                 self.video_recorder.add_camera(camera)
             psim.SameLine()
             if (psim.Button("Reset")):
@@ -545,6 +575,195 @@ class Playground:
 
             psim.PopItemWidth()
             psim.TreePop()
+    
+    def _draw_novel_view_from_calib_controls(self):
+        """ Draws a widget to render novel views from a camera calibration file. User can fly to different camera views in
+        the unit to see how the simulated view from that particular Vilota device looks"""
+        psim.SetNextItemOpen(False, psim.ImGuiCond_FirstUseEver)
+
+        # Add a persistent status message attribute if not present
+        if not hasattr(self, "_novel_view_calib_status"):
+            self._novel_view_calib_status = ""
+
+        # Add an attribute for successfully loaded calibration
+        if not hasattr(self, "calibration_loaded"):
+            self.calibration_loaded = False
+
+        if psim.TreeNode("Novel View from Vilota Calibration file"):
+            #psim.Text("Place your calibration file into a folder called ./calibrations")
+            
+            _, self.novel_view_renderer.calibration_filename = psim.InputText(
+                "Calibration Path (relative to root)",
+                self.novel_view_renderer.calibration_filename
+            )
+            self.novel_view_renderer.set_filepath()
+            calibration_path = self.novel_view_renderer.calibration_fullpath
+            psim.Text(f"Calibration file will be loaded from:{calibration_path}")
+
+            # Disable "Load Calibration" button if calibration is already loaded
+            psim.BeginDisabled(self.calibration_loaded == True)
+            if psim.Button("Load Calibration"):
+                try:
+                    self.novel_view_renderer.load_device()
+                    self.calibration_loaded = True  # Set the flag to indicate that calibration is loaded
+                    self._novel_view_calib_status = f"Loaded {self.novel_view_renderer.get_camera_count()} cameras from {calibration_path}"
+                    self.distortions = self.novel_view_renderer.get_cam_distortions()
+                    print(f"Distortions: {self.distortions}")
+                except FileNotFoundError as e:
+                    self._novel_view_calib_status = f"Calibration file not found. \nPlease make sure that file exists."
+                    import traceback; traceback.print_exc()
+                except ValueError as e:
+                    self._novel_view_calib_status = f"{e}"
+                    import traceback; traceback.print_exc()
+                except Exception as e:
+                    self._novel_view_calib_status = f"{e}"
+                    import traceback; traceback.print_exc()
+                    
+            psim.EndDisabled()
+
+            if self.novel_view_renderer.is_loaded():
+                psim.SameLine()
+                if psim.Button("Reload Calibration"):
+                    try:
+                        self.calibration_loaded = False  # Reset the flag to allow reloading
+                        self.novel_view_renderer.load_device(reload=True)
+                        self._novel_view_calib_status = f"Reloaded {self.novel_view_renderer.get_camera_count()} cameras from {calibration_path}"
+                        self.distortions = self.novel_view_renderer.get_cam_distortions()
+                        print(f"Distortions: {self.distortions}")
+                        self.calibration_loaded = True  # Set the flag to indicate that the device is loaded
+                    except FileNotFoundError as e:
+                        self._novel_view_calib_status = f"Calibration file not found. \nPlease make sure that file exists."
+                    except ValueError as e:
+                        self._novel_view_calib_status = f"{e}"
+                    except Exception as e:
+                        self._novel_view_calib_status = f"{e}"
+            # Always display the status message if present
+            if self._novel_view_calib_status:
+                psim.Text(self._novel_view_calib_status)
+
+            
+            
+            if getattr(self, "selected_camera_idx", None) is None:
+                # If no camera is selected, select the first one by default
+                self.selected_camera_idx = 1    
+            # # If calibration is loaded, show the camera controls
+            if self.calibration_loaded and psim.TreeNode("Device loaded"):
+                psim.Text(self.novel_view_renderer.get_device_name_and_serial_no())
+
+                for idx, (camera) in self.novel_view_renderer.get_all_cameras().items():
+                    # Draw a button to select this camera
+                    if psim.Button(f"Select Camera {idx}"):
+                        self.selected_camera_idx = idx
+                        psim.SameLine()
+                        self._draw_single_vk_cam(idx, camera)
+                    elif self.selected_camera_idx == idx:
+                        psim.SameLine()
+                        self._draw_single_vk_cam(idx, camera)
+                psim.Text(f"Origin camera = {self.novel_view_renderer.get_origin_camera_index()}")
+            
+            if self.calibration_loaded:
+                origin = self.novel_view_renderer.get_origin_camera_index()
+                if self.calibration_loaded and self.selected_camera_idx == origin and psim.Button("Save World to Cam D"):
+                    cam_d_view_matrix = ps.get_camera_view_matrix()
+                    self.novel_view_renderer.world_to_camd = cam_d_view_matrix
+                    print(f"Saved world to cam D view matrix: {cam_d_view_matrix}")
+                
+                if len(self.novel_view_renderer.world_to_camd) != 0 and self.selected_camera_idx != origin and psim.Button("Save world to cam i"):
+                    cam_i_view_matrix = ps.get_camera_view_matrix()
+                    self.novel_view_renderer.world_to_cami = cam_i_view_matrix
+                    self.novel_view_renderer.i = self.selected_camera_idx
+                    print(f"Saved world to cam {self.novel_view_renderer.i} view matrix : {self.novel_view_renderer.world_to_cami}")
+                
+                if len(self.novel_view_renderer.world_to_camd) != 0 and len(self.novel_view_renderer.world_to_cami) != 0 and psim.Button("Check rig layout"):
+                    self.novel_view_renderer.check_rig_layout()
+
+            #TODO: update this to load from json
+            if getattr(self, "scene_center", None) is None:
+                # If no center is defined, select this by default
+                self.scene_center = [0.999811291694641, 0.00488592078909278, -0.0188061650842428, 0.0775126442313194, 0.0049631642177701, -0.999979257583618, 0.00406301999464631, 0.000678252428770065, -0.0187858808785677, -0.0041555892676115, -0.999814748764038, 1.49740719795227, 0.0, 0.0, 0.0, 1.0]
+                
+            if self.calibration_loaded and psim.Button("Save Scene Center"):
+                params_string = ps.get_view_as_json()
+                params_json = json.loads(params_string)
+                # Grab the view matrix
+                view_mat = params_json.get("viewMat", None)
+                self.scene_center = view_mat if view_mat is not None else self.scene_center
+                self.novel_view_renderer.center_view_matrix = self.scene_center
+                sixdof_pose = self.novel_view_renderer.convert_scene_center_to_6dof_pose()
+                view_mat_string = str(view_mat) if view_mat is not None else None
+                print(f"View matrix: {view_mat}")
+                if view_mat is not None:
+                    with open ("./calibration_files/saved_views/view.txt", "w") as f:
+                        f.write(f"View matrix: {view_mat_string}\n")
+                        f.write(f"6DOF pose: {sixdof_pose}\n")
+                psim.Text(f"6DOF pose: {sixdof_pose}")
+                print(f"6DOF pose: {sixdof_pose}")
+            
+            psim.SameLine()        
+                
+            if self.calibration_loaded and psim.Button("Move to Scene center"):
+                if hasattr(self, "scene_center") and self.scene_center is not None:
+                    # Move the camera to the saved scene center
+                    self.novel_view_renderer.move_rig_to_view(self.scene_center)
+                cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+                view_params = polyscope_from_kaolin_camera(cam)
+                eye = view_params.get_position()
+                target = view_params.get_position() + view_params.get_look_dir()
+                up = view_params.get_up_dir()
+                ps.look_at_dir(eye, target, up, fly_to=True)
+            
+            #set indicator for trajectory loaded
+            if getattr(self, "trajectory_loaded", None) is None:
+                self.trajectory_loaded = False
+            
+            if getattr(self, "poses_list", None) is None:
+                self.poses_list = []
+            
+            _, self.novel_view_renderer.trajectory_filename = psim.InputText(
+                "Trajectory filename (in ./calibration_files/trajectories)",
+                self.novel_view_renderer.trajectory_filename
+            )
+            self.novel_view_renderer.set_trajectory_filepath()
+            trajectory_path = self.novel_view_renderer.trajectory_fullpath
+            psim.Text(f"Trajectory file will be loaded from:{trajectory_path}")
+
+
+            if self.calibration_loaded and psim.TreeNode("Load Trajectory"):
+                if psim.Button("Load Trajectory"):
+                    self.trajectory_loaded = True
+                    poses_list = self.novel_view_renderer.get_trajectory_poses()
+                    self.poses_list = poses_list
+                    psim.Text(f"Loaded {len(poses_list)} poses from the trajectory.")
+                if self.trajectory_loaded:
+                    self._draw_cam_trajectory_view(self.poses_list)
+            
+            
+            if self.calibration_loaded and psim.TreeNode("Move device to pose"):
+                psim.Text("Enter your 6DOF pose (angles in degrees):")
+                # Persist pose values as an attribute so they don't reset every frame
+                if not hasattr(self, "_move_pose_values"):
+                    self._move_pose_values = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+                labels = ["x", "y", "z", "Roll", "Pitch", "Yaw"]
+                changed_any = False
+                for i, label in enumerate(labels):
+                    changed, value = psim.InputFloat(label, self._move_pose_values[i])
+                    if changed:
+                        self._move_pose_values[i] = value
+                        changed_any = True
+                if psim.Button("Set 6dof pose"):
+                    pose = self._move_pose_values.copy()
+                    self.novel_view_renderer.move_rig_to_6dof(pose)
+                    cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+                    view_params = polyscope_from_kaolin_camera(cam)
+                    eye = view_params.get_position()
+                    target = view_params.get_position() + view_params.get_look_dir()
+                    up = view_params.get_up_dir()
+                    ps.look_at_dir(eye, target, up, fly_to=True)
+
+            psim.PopItemWidth()
+            psim.TreePop()
+
+
 
     def _draw_slice_plane_controls(self):
 
@@ -1025,6 +1244,50 @@ class Playground:
             self.primitives.recompute_stacked_buffers()
         self.is_force_canvas_dirty = self.is_force_canvas_dirty or settings_changed
 
+    def _draw_single_vk_cam(self, i, cam: DistortionCamera):
+        view_params = polyscope_from_kaolin_camera(cam)
+        eye = view_params.get_position()
+        target = view_params.get_position() + view_params.get_look_dir() #TODO: print eye target and up
+        up = view_params.get_up_dir()
+        dist = cam.distortion_coefficients
+        psim.PushItemWidth(200)
+        if (psim.Button(f"Fly to")):
+            ps.look_at_dir(eye, target, up, fly_to=True)
+        
+        xi_alpha = "Not Fisheye"
+        if cam.distortion_coefficients is not None:
+            xi = round(float(cam.distortion_coefficients[9]), 2)
+            alpha = round(float(cam.distortion_coefficients[10]), 2)
+            xi_alpha = f"xi: {xi}, alpha: {alpha}"
+        
+        if cam is not None:
+            fx, fy, cx, cy = cam.intrinsics.focal_x, cam.intrinsics.focal_y, cam.intrinsics.x0, cam.intrinsics.y0
+            window_w, window_h = cam.intrinsics.width, cam.intrinsics.height
+            h_fov = 2 * math.atan2(window_w / 2, fx) * (180 / math.pi)
+            v_fov = 2 * math.atan2(window_h / 2, fy) * (180 / math.pi)
+            
+            psim.Text(f"Horizontal FOV: {h_fov:.2f} degrees")
+            psim.Text(f"Vertical FOV: {v_fov:.2f} degrees")
+        
+        psim.SameLine()
+        psim.Text(f"(Selected), {xi_alpha}")
+        psim.PopItemWidth()
+    
+    def _draw_cam_trajectory_view(self, poses_list):
+        if poses_list is not None:
+            for i in range(len(poses_list)):
+                pose = poses_list[i]
+                if psim.Button(f"Move to Pose {i}"):
+                    self.novel_view_renderer.move_rig_to_6dof(pose)
+                    cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+                    view_params = polyscope_from_kaolin_camera(cam)
+                    eye = view_params.get_position()
+                    target = view_params.get_position() + view_params.get_look_dir()
+                    up = view_params.get_up_dir()
+                    ps.look_at_dir(eye, target, up, fly_to=True)
+
+    
+
     def _draw_single_trajectory_camera(self, i, cam):
         view_params = polyscope_from_kaolin_camera(cam)
         eye = view_params.get_position()
@@ -1061,6 +1324,8 @@ class Playground:
         psim.Separator()
         self._draw_video_recording_controls()
         psim.Separator()
+        self._draw_novel_view_from_calib_controls()
+        psim.Separator()
         self._draw_slice_plane_controls()
         psim.Separator()
         self._draw_antialiasing_widget()
@@ -1070,7 +1335,9 @@ class Playground:
         self._draw_materials_widget()
         psim.Separator()
         self._draw_primitives_widget()
+        
 
         # Finally refresh the canvas by rendering the next pass, if needed
         if self.live_update:
             self.update_render_view_viz()
+

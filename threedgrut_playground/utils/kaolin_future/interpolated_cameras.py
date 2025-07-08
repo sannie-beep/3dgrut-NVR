@@ -18,7 +18,7 @@ import torch
 from typing import List, Iterator, Union, Callable
 from scipy.special import comb
 from kaolin.math import quat
-from kaolin.render.camera import Camera
+from threedgrut_playground.utils.distortion_camera import DistortionCamera as Camera
 
 """
 This module is to be included in next version of kaolin 0.18.0.
@@ -315,10 +315,16 @@ def interpolate_camera_on_polynomial_path(
 
     cam = Camera.from_args(
         view_matrix=view_matrix,
+        distortion_coefficients= cam1.distortion_coefficients,
         width=width, height=height,
         device=cam1.device,
         **intrinsics
     )
+    # # Check if the cam here has distortion coefficients, if not, raise error
+    # if cam.distortion_coefficients is None or len(cam.distortion_coefficients) == 0:
+    #     raise ValueError("Interpolated camera does not have distortion coefficients. "
+    #                      "Ensure all cameras in the trajectory have valid distortion coefficients.")
+    # else: print(f"Interpolated camera has distortion coefficients: {cam.distortion_coefficients}")
 
     return cam
 
@@ -393,6 +399,7 @@ def interpolate_camera_on_spline_path(
     # Create camera from view matrix
     cam = Camera.from_args(
         view_matrix=view_matrix,
+        distortion_coefficients=cam1.distortion_coefficients,
         width=width, height=height,
         device=cam1.device,
         **intrinsics
@@ -411,7 +418,14 @@ def get_interpolator(interpolation: str, trajectory: List[Camera]) -> Callable:
     Returns:
         Callable: An interpolator function that takes a trajectory, timestep, and frames_between_cameras, and returns a camera.
     """
+    # check if trajectory cam has distortion coefficients
+    # if not trajectory:
+    #     raise ValueError("The trajectory must contain at least one camera.")
+    # if not all(hasattr(cam, 'distortion_coefficients') for cam in trajectory):
+    #     raise ValueError("All cameras in the trajectory must have 'distortion_coefficients' attribute.")
+    
     if interpolation == 'polynomial':
+        print("Distortion coefficients are present before poly interpolation.")
         interpolator =  interpolate_camera_on_polynomial_path
         if len(trajectory) < 2:
             raise ValueError("For polynomial interpolation, cameras trajectory must have at least 2 cameras.")
@@ -487,6 +501,9 @@ def camera_path_generator(
     interpolator = get_interpolator(interpolation, trajectory)
 
     _trajectory = [trajectory[0]] + trajectory + [trajectory[-1], trajectory[-1]]
+    # check if all cameras in the trajectory have distortion coefficients
+    if not all(hasattr(cam, 'distortion_coefficients') for cam in _trajectory):
+        raise ValueError("All cameras in the trajectory must have 'distortion_coefficients' attribute.")
     timestep = frames_between_cameras
 
     while True:

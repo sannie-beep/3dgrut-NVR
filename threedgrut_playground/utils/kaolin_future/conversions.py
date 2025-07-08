@@ -16,8 +16,9 @@
 import torch
 import numpy as np
 import polyscope as ps
-from typing import Union
-from kaolin.render.camera import Camera
+from typing import List, Union
+#from kaolin.render.camera import Camera
+from threedgrut_playground.utils.distortion_camera import DistortionCamera as Camera
 
 """
 This module is to be included in next version of kaolin 0.18.0.
@@ -30,6 +31,7 @@ def polyscope_to_kaolin_camera(
     height: int,
     near: float = 1e-2,
     far: float = 1e2,
+    distortion_coefficients: List[float] = None,
     device: Union[torch.device, str] = 'cpu'
 ) -> Camera:
     """ Converts a polyscope camera (polyscope.core.CameraParameters) to kaolin Camera format (kaolin.render.camera.Camera).
@@ -39,10 +41,14 @@ def polyscope_to_kaolin_camera(
 
     Args:
         ps_camera (ps.core.CameraParameters): A polyscope camera object.
+        is_novel_view (bool): If True, the camera will be rendered as a distortion camera
         width (int): Image plane width in pixels.
         height (int): Image plane height in pixels.
         near (optional, float): near clipping plane, defines the min depth of the view frustrum.
         far (optional, float): far clipping plane, define the max depth of the view frustrum.
+        distortion_coefficients (optional, List[float]): Distortion coefficients for the camera. If loaded from calibration file, the distortion
+        camera will have a list of 6 coefficients, which are used to apply double sphere unprojection for ray generation.
+            If None, no distortion is applied. Default: None
         device (optional, torch.device or str): the device on which camera parameters will be allocated. Default: cpu
     Returns:
         (kaolin.render.camera.Camera):
@@ -56,7 +62,8 @@ def polyscope_to_kaolin_camera(
         width=width, height=height,
         near=near, far=far,
         dtype=torch.float64,
-        device=device
+        device=device,
+        distortion_coefficients= distortion_coefficients
     )
 
 

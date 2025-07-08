@@ -34,3 +34,8 @@ results/
 thirdparty/ncore/
 
 playground/assets/
+
+video_outputs/
+*.mp4
+*.obj
+*.ply

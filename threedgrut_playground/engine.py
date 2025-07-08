@@ -22,7 +22,7 @@ from typing import List, Optional, Dict, Tuple, Callable
 from enum import IntEnum
 from pathlib import Path
 from dataclasses import dataclass
-from kaolin.render.camera import Camera, generate_centered_pixel_coords, generate_pinhole_rays
+from kaolin.render.camera import generate_centered_pixel_coords
 from threedgrut.utils.logger import logger
 from threedgrut.model.model import MixtureOfGaussians
 from threedgrut.model.background import BackgroundColor
@@ -32,10 +32,12 @@ from threedgrut_playground.utils.mesh_io import (
 )
 from threedgrut_playground.utils.depth_of_field import DepthOfField
 from threedgrut_playground.utils.video_out import VideoRecorder
+from threedgrut_playground.utils.novel_view_renderer import NovelViewRenderer
 from threedgrut_playground.utils.spp import SPP
 from threedgrut_playground.utils.environment import Environment
 from threedgrut_playground.utils.kaolin_future.transform import ObjectTransform
-from threedgrut_playground.utils.kaolin_future.fisheye import generate_fisheye_rays
+from threedgrut_playground.utils.kaolin_future.fisheye import generate_fisheye_rays, generate_fisheye_rays_double_sphere, generate_pinhole_rays, generate_rays_kb4
+from threedgrut_playground.utils.distortion_camera import DistortionCamera
 
 
 #################################
@@ -715,6 +717,7 @@ class Engine3DGRUT:
         - scene_mog: 3D Gaussian model, representing the scene
         - primitives: Mesh primitive manager, for adding / removing / modifying mesh objects in the scene
         - video_recorder: Camera path recording utility, for recording videos of camera trajectories
+        - novel_view_renderer: Novel view rendering utility for positioning and viewing simulated scene from Vilota calibration file
         - depth_of_field: Depth of field effect manager
         - spp: Antialiasing effect manager
 
@@ -774,7 +777,7 @@ class Engine3DGRUT:
         # Rendered pixels are stored in framebuffer['rgb']
         ```
     """
-    AVAILABLE_CAMERAS = ['Pinhole', 'Fisheye']
+    AVAILABLE_CAMERAS = ['Pinhole', 'Equidistant Fisheye', 'Double Sphere Fisheye']
     ANTIALIASING_MODES = ['4x MSAA', '8x MSAA', '16x MSAA', 'Quasi-Random (Sobol)']
 
     def __init__(
@@ -794,7 +797,7 @@ class Engine3DGRUT:
 
         # -- Outwards facing, these are the useful settings to configure --
         """ Type of camera used to render the scene """
-        self.camera_type = 'Pinhole'
+        self.camera_type = 'Double Sphere Fisheye'
         """ Camera field of view """
         self.camera_fov = 45.0
         """ Toggles depth of field on / off """
@@ -823,9 +826,9 @@ class Engine3DGRUT:
             scene_scale=scene_scale,
             device=self.device
         )
-        self.primitives.add_primitive(
-            geometry_type='Sphere', primitive_type=OptixPrimitiveTypes.GLASS, device=self.device
-        )
+        # self.primitives.add_primitive(
+        #     geometry_type='Sphere', primitive_type=OptixPrimitiveTypes.GLASS, device=self.device
+        # )
         self.rebuild_bvh(self.scene_mog)
 
         self.last_state = dict(
@@ -835,6 +838,7 @@ class Engine3DGRUT:
         )
 
         self.video_recorder = VideoRecorder(renderer=self)
+        self.novel_view_renderer = NovelViewRenderer(renderer=self)
 
         """ When this flag is toggled on, the state of the materials have changed they need to be re-uploaded to device
         """
@@ -990,7 +994,7 @@ class Engine3DGRUT:
 
     @torch.cuda.nvtx.range("render_pass")
     @torch.no_grad()
-    def render_pass(self, camera: Camera, is_first_pass: bool) -> Dict[str, torch.Tensor]:
+    def render_pass(self, camera: DistortionCamera, is_first_pass: bool) -> Dict[str, torch.Tensor]:
         """ Renders a single frame pass from the provided camera view, with optional progressive effects.
         This method is designed for interactive/real-time rendering scenarios where frame rate is prioritized
         over immediate full quality. It manages an internal state for progressive rendering effects.
@@ -1042,10 +1046,24 @@ class Engine3DGRUT:
             ```
         """
         # Rendering 3DGRUT requires camera to run on cuda device -- avoid crashing
+        # if camera.distortion_coefficients is not None:
+        #     print(f"Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
+        # else:
+        #     print("Cam has no distortion coeffs in render_pass")
         if camera.device.type == 'cpu':
+            # Preserve distortion_coefficients when moving to CUDA
+            distortion_coeffs = getattr(camera, 'distortion_coefficients', None)
             camera = camera.cuda()
+            if distortion_coeffs is not None:
+                camera.distortion_coefficients = distortion_coeffs
+
+        if getattr(camera, 'distortion_coefficients', None) is not None:
+            print(f"Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
+        else:
+            print("Cam has no distortion coeffs in render_pass")
 
         is_use_spp = not is_first_pass and not self.use_depth_of_field and self.use_spp
+        # Here is where the rays are generated (in a rendering pass)
         rays = self.raygen(camera, use_spp=is_use_spp)
 
         if is_first_pass:
@@ -1091,7 +1109,7 @@ class Engine3DGRUT:
         return rb
 
     @torch.cuda.nvtx.range("render")
-    def render(self, camera: Camera) -> Dict[str, torch.Tensor]:
+    def render(self, camera: DistortionCamera) -> Dict[str, torch.Tensor]:
         """ Renders a complete frame with all enabled visual effects.
         e.g. high-quality rendering method that ensures all progressive effects (antialiasing, depth of field)
         are fully computed.
@@ -1100,7 +1118,7 @@ class Engine3DGRUT:
         require additional passes. This method is best suited for offline rendering.
         
         Args:
-            camera (Camera): Camera object defining the view to render
+            camera (DistortionCamera): DistortionCamera object defining the view to render
 
         Returns:
             Dict[str, torch.Tensor]: Rendering results containing:
@@ -1116,6 +1134,11 @@ class Engine3DGRUT:
             result = engine.render(camera)  # Will compute all passes
             ```
         """
+        # check if cam has distortion coefficients else value error
+        if getattr(camera, 'distortion_coefficients', None) is None:
+            raise ValueError("Camera must have distortion coefficients for rendering.")
+        else:
+            print(f"IN RENDER: Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
         renderbuffers = self.render_pass(camera, is_first_pass=True)
         while self.has_progressive_effects_to_render():
             renderbuffers = self.render_pass(camera, is_first_pass=False)
@@ -1219,7 +1242,7 @@ class Engine3DGRUT:
         self.tracer.build_gs_acc(gaussians=scene_mog, rebuild=rebuild)
         self.primitives.rebuild_bvh_if_needed()
 
-    def did_camera_change(self, camera: Camera) -> bool:
+    def did_camera_change(self, camera: DistortionCamera) -> bool:
         """ Checks if the camera view matrix has changed from the last cached state.
 
         Compares the current camera's view matrix against the cached camera matrix
@@ -1264,7 +1287,7 @@ class Engine3DGRUT:
                                     self.use_spp and self.spp.spp_accumulated_for_frame <= self.spp.spp
         return has_dof_buffers_to_render or has_spp_buffers_to_render
 
-    def is_dirty(self, camera: Camera) -> bool:
+    def is_dirty(self, camera: DistortionCamera) -> bool:
         """ Returns whether the scene state has changed since the last canvas render:
         - Camera has moved
         - Materials have been modified
@@ -1274,7 +1297,7 @@ class Engine3DGRUT:
         to determine if they need to re-render the scene.
 
         Args:
-            camera (Camera): Current camera to compare against cached state
+            camera (DistortionCamera): Current camera to compare against cached state
 
         Returns:
             bool: True if scene needs re-rendering, False if cached framebuffers can be used
@@ -1298,7 +1321,7 @@ class Engine3DGRUT:
             return True
         return False
 
-    def _cache_last_state(self, camera: Camera, renderbuffers: Dict[str, torch.Tensor], canvas_size: Tuple[int, int]):
+    def _cache_last_state(self, camera: DistortionCamera, renderbuffers: Dict[str, torch.Tensor], canvas_size: Tuple[int, int]):
         """ Caches the last rendered state for comparison during future renders.
 
         Args:
@@ -1312,7 +1335,7 @@ class Engine3DGRUT:
         self.last_state['rgb_buffer'] = renderbuffers['rgb_buffer']
         self.last_state['opacity'] = renderbuffers['opacity']
 
-    def _raygen_pinhole(self, camera: Camera, jitter: Optional[torch.Tensor] = None) -> RayPack:
+    def _raygen_pinhole(self, camera: DistortionCamera, jitter: Optional[torch.Tensor] = None) -> RayPack:
         """ Generates ray origins and directions for pinhole camera model.
 
         Creates rays for each pixel in the image plane using the pinhole camera model.
@@ -1343,17 +1366,13 @@ class Engine3DGRUT:
             pixel_x=torch.round(pixel_x - 0.5).squeeze(-1),
             pixel_y=torch.round(pixel_y - 0.5).squeeze(-1)
         )
+    @torch.cuda.nvtx.range("_raygen_kb4")
+    def _raygen_kb4(self, camera: DistortionCamera, jitter: Optional[torch.Tensor] = None) -> RayPack:
+        """Generates ray origins and directions using the Kb4 camera model.
 
-    @torch.cuda.nvtx.range("_raygen_fisheye")
-    def _raygen_fisheye(self, camera: Camera, jitter: Optional[torch.Tensor] = None) -> RayPack:
-        """Generates ray origins and directions for a perfect fisheye camera model.
-
-        Creates rays for each pixel using the fisheye camera model. Includes
-        mask for valid rays since not all pixels map to valid directions in
-        equirectangular fisheye projection.
-
+        Creates rays for each pixel using the kb4 unprojection function
         Args:
-            camera (Camera): Camera parameters including intrinsics and pose
+            camera (DistortionCamera): Camera parameters including distortions, intrinsics and pose
             jitter (Optional[torch.Tensor]): Per-pixel offset of shape (H, W, 2).
                 Used for antialiasing. Defaults to None.
 
@@ -1364,6 +1383,7 @@ class Engine3DGRUT:
                 - pixel_x/y: Integer pixel coordinates
                 - mask: Boolean mask of valid rays (H, W, 1)
         """
+        print("kb4 raygen")
         pixel_y, pixel_x = generate_centered_pixel_coords(
             camera.width, camera.height, device=camera.device
         )
@@ -1372,7 +1392,112 @@ class Engine3DGRUT:
             pixel_x += jitter[:, :, 0]
             pixel_y += jitter[:, :, 1]
         ray_grid = [pixel_y, pixel_x]
-        rays_o, rays_d, mask = generate_fisheye_rays(camera, ray_grid)
+
+        #TODO: Edit to access from the distortion camera object instead
+        # testing to see if we can switch to fishye if the distortions are nonzero
+        if camera.__getattribute__("distortion_coefficients"):
+            distortion_coeffs = camera.distortion_coefficients
+            print(f"Using distortion coeff {distortion_coeffs[0]} for kb4 camera")
+        else:
+            distortion_coeffs = None  # or handle accordingly
+
+        if distortion_coeffs is None or len(distortion_coeffs) == 0:
+            # If no distortion coefficients are provided, use pinhole model
+            print("No distortion coefficients provided, using pinhole camera model")
+            return self._raygen_pinhole(camera, jitter)
+        
+        # Keep this for debugging
+        # distortion_coeffs = [447.0429382324219,
+        #             446.88421630859375,
+        #             956.8480224609375,
+        #             598.8782958984375,
+        #             -0.2742595374584198,
+        #             0.5588578581809998,]
+
+        if self.camera_type == 'Equidistant Fisheye':
+            # Generate rays using equidistant fisheye unprojection
+            rays_o, rays_d, mask = generate_fisheye_rays(camera, ray_grid)
+
+        elif self.camera_type == 'Pinhole':
+            # Fallback to pinhole if no distortion coefficients are provided
+            print("Using pinhole camera model for fisheye ray generation")
+            return self._raygen_pinhole(camera, jitter)
+        
+        else:
+            # Generate rays using double sphere fisheye unprojection
+            rays_o, rays_d = generate_rays_kb4(camera, distortion_coeffs, ray_grid)
+        
+        return RayPack(
+            rays_ori=rays_o.reshape(1, camera.height, camera.width, 3).float(),
+            rays_dir=rays_d.reshape(1, camera.height, camera.width, 3).float(),
+            pixel_x=torch.round(pixel_x - 0.5).squeeze(-1),
+            pixel_y=torch.round(pixel_y - 0.5).squeeze(-1)
+        )
+
+    @torch.cuda.nvtx.range("_raygen_fisheye")
+    def _raygen_fisheye(self, camera: DistortionCamera, jitter: Optional[torch.Tensor] = None) -> RayPack:
+        """Generates ray origins and directions for a perfect fisheye camera model.
+
+        Creates rays for each pixel using the fisheye camera model. Includes
+        mask for valid rays since not all pixels map to valid directions in
+        equirectangular fisheye projection.
+
+        Args:
+            camera (DistortionCamera): Camera parameters including intrinsics and pose
+            jitter (Optional[torch.Tensor]): Per-pixel offset of shape (H, W, 2).
+                Used for antialiasing. Defaults to None.
+
+        Returns:
+            RayPack: Contains:
+                - rays_ori: Ray origins of shape (1, H, W, 3)
+                - rays_dir: Ray directions of shape (1, H, W, 3)
+                - pixel_x/y: Integer pixel coordinates
+                - mask: Boolean mask of valid rays (H, W, 1)
+        """
+        print("fisheye raygen")
+        pixel_y, pixel_x = generate_centered_pixel_coords(
+            camera.width, camera.height, device=camera.device
+        )
+        if jitter is not None:
+            jitter = jitter.to(device=pixel_x.device)
+            pixel_x += jitter[:, :, 0]
+            pixel_y += jitter[:, :, 1]
+        ray_grid = [pixel_y, pixel_x]
+
+        #TODO: Edit to access from the distortion camera object instead
+        # testing to see if we can switch to fishye if the distortions are nonzero
+        if camera.__getattribute__("distortion_coefficients"):
+            distortion_coeffs = camera.distortion_coefficients
+            print(f"Using distortion coeff {distortion_coeffs[0]} for fisheye camera")
+        else:
+            distortion_coeffs = None  # or handle accordingly
+
+        if distortion_coeffs is None or len(distortion_coeffs) == 0:
+            # If no distortion coefficients are provided, use pinhole model
+            print("No distortion coefficients provided, using pinhole camera model")
+            return self._raygen_pinhole(camera, jitter)
+        
+        # Keep this for debugging
+        # distortion_coeffs = [447.0429382324219,
+        #             446.88421630859375,
+        #             956.8480224609375,
+        #             598.8782958984375,
+        #             -0.2742595374584198,
+        #             0.5588578581809998,]
+
+        if self.camera_type == 'Equidistant Fisheye':
+            # Generate rays using equidistant fisheye unprojection
+            rays_o, rays_d, mask = generate_fisheye_rays(camera, ray_grid)
+
+        elif self.camera_type == 'Pinhole':
+            # Fallback to pinhole if no distortion coefficients are provided
+            print("Using pinhole camera model for fisheye ray generation")
+            return self._raygen_pinhole(camera, jitter)
+        
+        else:
+            # Generate rays using double sphere fisheye unprojection
+            rays_o, rays_d, mask = generate_fisheye_rays_double_sphere(camera, distortion_coeffs, ray_grid)
+        
 
         return RayPack(
             rays_ori=rays_o.reshape(1, camera.height, camera.width, 3).float(),
@@ -1382,7 +1507,7 @@ class Engine3DGRUT:
             mask=mask.reshape(camera.height, camera.width, 1)
         )
 
-    def raygen(self, camera: Camera, use_spp: bool = False) -> RayPack:
+    def raygen(self, camera: DistortionCamera, use_spp: bool = False) -> RayPack:
         """ Generates rays for rendering based on current camera type.
 
         Creates ray batch for supported camera models.
@@ -1390,7 +1515,7 @@ class Engine3DGRUT:
         when SPP (Samples Per Pixel) is enabled.
 
         Args:
-            camera (Camera): Camera parameters including intrinsics and pose
+            camera (DistortionCamera): Camera parameters including intrinsics and pose
             use_spp (bool): Whether to generate multiple samples per pixel
                 for antialiasing. Defaults to False.
 
@@ -1400,11 +1525,24 @@ class Engine3DGRUT:
         """
         ray_batch_size = 1 if not use_spp else self.spp.batch_size
         rays = []
+        distortion_coefficients = None
+        if hasattr(camera, "distortion_coefficients") and camera.distortion_coefficients is not None and camera.distortion_coefficients[5] != 0.0:
+            print(f"In raygen DS dist: {camera.distortion_coefficients[0]}")
+            distortion_coefficients = camera.distortion_coefficients
+        else:
+            
+            if hasattr(camera, "distortion_coefficients") and camera.distortion_coefficients is not None:
+                distortion_coefficients = camera.distortion_coefficients
+                print(f"In raygen KB4 dist: {camera.distortion_coefficients[0]}")
         for _ in range(ray_batch_size):
             jitter = self.spp(camera.height, camera.width) if use_spp and self.spp is not None else None
-            if self.camera_type == 'Pinhole':
+            if distortion_coefficients is None:
+                print("Using pinhole camera model for ray generation")
                 next_rays = self._raygen_pinhole(camera, jitter)
-            elif self.camera_type == 'Fisheye':
+            elif distortion_coefficients is not None and distortion_coefficients[5] == 0.0:
+                print("Using KB4 unprojection for ray generation")
+                next_rays = self._raygen_kb4(camera, jitter)
+            elif distortion_coefficients is not None and distortion_coefficients[5] != 0.0:
                 next_rays = self._raygen_fisheye(camera, jitter)
             else:
                 raise ValueError(f"Unknown camera type: {self.camera_type}")
