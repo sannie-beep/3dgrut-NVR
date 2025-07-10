@@ -148,6 +148,7 @@ class Playground:
             ps.CameraIntrinsics(fov_vertical_deg=self.engine.camera_fov, aspect=window_w / window_h),
             ps.get_view_camera_parameters().get_extrinsics()
         )
+        
         ps.set_view_camera_parameters(view_params)
 
         # If window size changed since the last render call, mark the canvas as dirty.
@@ -158,6 +159,11 @@ class Playground:
                 self.is_force_canvas_dirty = True
 
         camera = polyscope_to_kaolin_camera(view_params, window_w, window_h, distortion_coefficients= distortion, device=self.engine.device)
+        if self.novel_view_renderer.is_loaded() and self.selected_camera_idx is not None:
+            fx, fy, cx, cy = self.novel_view_renderer.get_camera_intrinsics_at_index(self.selected_camera_idx)
+            camera = polyscope_to_kaolin_camera(
+                view_params, window_w, window_h, fx = fx, fy = fy, cx = cx, cy = cy, distortion_coefficients= distortion, device = self.engine.device, is_vilota=True)
+
         is_first_pass = self.is_dirty(camera)
         if not is_first_pass and not self.engine.has_progressive_effects_to_render():
             return self.engine.last_state['rgb'], self.engine.last_state['opacity']
@@ -186,14 +192,10 @@ class Playground:
         window_w, window_h = ps.get_window_size()
         if self.distortions:
             distortions = self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None
-            camera = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
-            # get the fx fy cx cy if the cam isnt fisheye
-            #print(f"CHECK 1 Distortions: {distortions} for camera {self.selected_camera_idx}")
-            if distortions[5] == 0.0:
-                intrinsics = self.novel_view_renderer.get_camera_intrinsics(self.selected_camera_idx) 
-                distortions = distortions + intrinsics
-                #print(f"EUFDBWVUBEWFUYI8V UIQERFWUVRN3QURIWV DISTORTION: {distortions} for camera {self.selected_camera_idx}")
-        # re-initialize if needed
+            # if distortions[5] == 0.0:
+            #     intrinsics = self.novel_view_renderer.get_camera_intrinsics_at_index(self.selected_camera_idx) 
+            #     distortions = distortions + intrinsics
+
         style = self.viz_render_styles[self.viz_render_style_ind]
         if force or self.viz_curr_render_style_ind != self.viz_render_style_ind or self.viz_curr_render_size != (
                 window_w, window_h):
@@ -420,10 +422,15 @@ class Playground:
             _, self.video_recorder.trajectory_output_path = psim.InputText("Video Output Path",
                                                                            self.video_recorder.trajectory_output_path)
             if (psim.Button("Add Camera")):
+                fx, fy, cx, cy = self.novel_view_renderer.get_camera_intrinsics_at_index(self.selected_camera_idx)
+                print(f"[{fx, fy, cx, cy}]")
                 camera = polyscope_to_kaolin_camera(
                     ps.get_view_camera_parameters(), width=self.video_w, height=self.video_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
+                    fx = fx, fy = fy, cx = cx, cy = cy
                 )
+                camera.set_cam_intr(fx, fy, cx, cy)
                 print(f"JFBERVIWQB4THVE Added to trajectory w dist:{camera.distortion_coefficients}")
+                print(f"Cam added to trajectory has intrinsics: {camera.get_camera_intrinsics()}")
                 self.video_recorder.add_camera(camera)
             psim.SameLine()
             if (psim.Button("Reset")):
@@ -601,7 +608,7 @@ class Playground:
             #TODO: update this to load from json
             if getattr(self, "scene_center", None) is None:
                 # If no center is defined, select this by default
-                self.scene_center = [0.999811291694641, 0.00488592078909278, -0.0188061650842428, 0.0775126442313194, 0.0049631642177701, -0.999979257583618, 0.00406301999464631, 0.000678252428770065, -0.0187858808785677, -0.0041555892676115, -0.999814748764038, 1.49740719795227, 0.0, 0.0, 0.0, 1.0]
+                self.scene_center = [0.999029278755188, 0.00626010866835713, 0.043603427708149, 0.0137977302074432, 0.00638079596683383, -0.99997615814209, -0.00262921908870339, -0.265371531248093, 0.0435859337449074, 0.00290489150211215, -0.999045491218567, 2.19675970077515, 0.0, 0.0, 0.0, 1.0]
                 
             if self.calibration_loaded and psim.Button("Save Scene Center"):
                 params_string = ps.get_view_as_json()

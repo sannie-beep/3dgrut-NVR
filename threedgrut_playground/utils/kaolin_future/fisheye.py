@@ -16,7 +16,8 @@
 import math
 import torch
 from typing import Optional, Tuple
-from kaolin.render.camera import Camera, generate_centered_pixel_coords, CameraFOV
+from threedgrut_playground.utils.distortion_camera import DistortionCamera as Camera
+from kaolin.render.camera import generate_centered_pixel_coords, CameraFOV
 import numpy as np
 
 """
@@ -194,7 +195,7 @@ def generate_fisheye_rays_double_sphere(
     rays_dir = rays_dir.reshape(-1, 3)  # shape (H*W, 3)
     xi_shift = torch.tensor([0.0, 0.0, xi], device=rays_dir.device, dtype=rays_dir.dtype)
     xi_shift = xi_shift.view(1, 3)  # shape (1, 3)
-    rays_dir = rays_dir + xi_shift
+    rays_dir = rays_dir - xi_shift
 
     ray_dir = rays_dir.reshape(-1, 3)
     ray_orig = torch.zeros_like(ray_dir)
@@ -315,7 +316,7 @@ def generate_rays_kb4(
     """
     assert len(camera) == 1, "generate_rays_kb4() supports only camera input of batch size 1"
     if coords_grid is None:
-        coords_grid = generate_centered_pixel_coords(1280.0, 800.0, device=camera.device)
+        coords_grid = generate_centered_pixel_coords(camera.width, camera.height, device=camera.device)
     else:
         assert camera.device == coords_grid[0].device, \
             f"Expected camera and coords_grid[0] to be on the same device, " \
@@ -324,10 +325,16 @@ def generate_rays_kb4(
         assert camera.device == coords_grid[1].device, \
             f"Expected camera and coords_grid[1] to be on the same device, " \
             f"but found {camera.device} and {coords_grid[1].device}."
-    print(f"Width: {camera.width}, Height: {camera.height}")
-    # Unpack distortion params
+    
+    # Unpack = params
     k1, k2, k3, k4 = distortion_params[:4]
-    fx, fy, cx, cy = distortion_params[-4:]
+
+    fx, fy, cx, cy = camera.get_camera_intrinsics()
+    #fx, fy, cx, cy = camera.get_camera_intrinsics()
+    # import sys
+    # sys.exit(f"MY COEFFS: {fx, fy, cx, cy, k1, k2, k3, k4}")
+             
+    #fx, fy, cx, cy = distortion_params[-4:]
     pixel_y, pixel_x = coords_grid
     pixel_x = pixel_x.to(camera.device, camera.dtype)
     pixel_y = pixel_y.to(camera.device, camera.dtype)

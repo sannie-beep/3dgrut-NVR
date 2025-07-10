@@ -283,10 +283,14 @@ class NovelViewRenderer:
         return self.v_device.get_origin_camera_index()
     
     @ensure_loaded
-    def get_camera_intrinsics(self, index: int) -> List[float]:
+    def get_camera_intrinsics_at_index(self, index: int) -> List[float]:
         camera = self.get_camera_at_index(index)
+        return self.get_camera_intrinsics(camera)
         #intrs = camera.intrinsics.perspective_matrix().numpy()[:2, :3, :3]
         #print(f"Camera {index} intrinsic projection matrix:\n{intrs}\n")
+        
+    
+    def get_camera_intrinsics(self, camera) -> Tuple[float, float, float, float]:
         fx = float(camera.intrinsics.focal_x)
         fy = float(camera.intrinsics.focal_y)
         cx = float(camera.intrinsics.x0)
@@ -557,10 +561,11 @@ class Loader:
             width = camera_params['width'],
             height = camera_params['height'],
             distortion_coefficients = camera_params['distortionCoeff'],
+            intrinsic_params=[f_x, f_y, c_x, c_y],
             dtype=torch.float64,
             device = device
         )
-
+        distortion_camera.set_intrinsic_params([f_x, f_y, c_x, c_y])
 
         return extrinsic_matrix, distortion_camera
     

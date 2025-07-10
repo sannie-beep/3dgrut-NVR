@@ -31,6 +31,11 @@ def polyscope_to_kaolin_camera(
     height: int,
     near: float = 1e-2,
     far: float = 1e2,
+    fx = None,
+    fy = None,
+    cx = None,
+    cy = None,
+    is_vilota: bool = False,
     distortion_coefficients: List[float] = None,
     device: Union[torch.device, str] = 'cpu'
 ) -> Camera:
@@ -56,7 +61,7 @@ def polyscope_to_kaolin_camera(
     """
     view_matrix = ps_camera.get_view_mat()
     fov_y = ps_camera.get_fov_vertical_deg() * np.pi / 180.0    # to radians
-    return Camera.from_args(
+    cam =  Camera.from_args(
         view_matrix=view_matrix,
         fov=fov_y,
         width=width, height=height,
@@ -65,6 +70,20 @@ def polyscope_to_kaolin_camera(
         device=device,
         distortion_coefficients= distortion_coefficients
     )
+    if is_vilota:
+        cam = Camera.from_args(
+            view_matrix=view_matrix,
+            width=width, height=height,
+            focal_x=fx, focal_y=fy,
+            x0=cx, y0=cy,
+            dtype=torch.float64,
+            device=device,
+            distortion_coefficients=distortion_coefficients,
+            intrinsic_params=[fx, fy, cx, cy]
+        )
+    
+    return cam
+
 
 
 def polyscope_from_kaolin_camera(camera: Camera) -> ps.core.CameraParameters:

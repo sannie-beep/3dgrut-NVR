@@ -377,6 +377,7 @@ def interpolate_camera_on_spline_path(
 
     # Intrinsics
     intrinsics = dict()
+    print("CK1")
     if cam1.lens_type == 'pinhole':
         intrinsics['fov'] = (
             cam1.fov(in_degrees=False),
@@ -384,7 +385,9 @@ def interpolate_camera_on_spline_path(
             cam3.fov(in_degrees=False),
             cam4.fov(in_degrees=False)
         )
+        print("CK2")
     elif cam1.lens_type == 'ortho':
+        print("CK3")
         intrinsics['fov_distance'] = \
             (cam1.fov_distance(), cam2.fov_distance(), cam3.fov_distance(), cam4.fov_distance())
     else:
@@ -396,14 +399,22 @@ def interpolate_camera_on_spline_path(
     width = round(_catmull_rom(cam1.width, cam2.width, cam3.width, cam4.width, x))
     height = round(_catmull_rom(cam1.height, cam2.height, cam3.height, cam4.height, x))
 
+    fx, fy, cx, cy = cam1.get_intrinsic_params()
     # Create camera from view matrix
     cam = Camera.from_args(
         view_matrix=view_matrix,
         distortion_coefficients=cam1.distortion_coefficients,
         width=width, height=height,
         device=cam1.device,
-        **intrinsics
+        focal_x = fx,
+        focal_y = fy,
+        x0 = cx,
+        y0= cy
+        #**intrinsics
     )
+    #check the type of the camera
+    # import sys
+    # sys.exit(f"Intrinsics: {cam.get_camera_intrinsics()}")
 
     return cam
 
@@ -499,6 +510,7 @@ def camera_path_generator(
             An interpolated camera object formed by the cameras trajectory.
     """
     interpolator = get_interpolator(interpolation, trajectory)
+    
 
     _trajectory = [trajectory[0]] + trajectory + [trajectory[-1], trajectory[-1]]
     # check if all cameras in the trajectory have distortion coefficients
@@ -513,3 +525,4 @@ def camera_path_generator(
         traj_idx = (timestep // frames_between_cameras) % len(_trajectory)
         if traj_idx == len(_trajectory) - 3:
             break
+

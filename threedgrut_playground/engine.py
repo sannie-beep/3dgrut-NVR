@@ -939,16 +939,18 @@ class Engine3DGRUT:
             ```
         """
         # Rendering 3DGRUT requires camera to run on cuda device -- avoid crashing
-        # if camera.distortion_coefficients is not None:
-        #     print(f"Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
-        # else:
-        #     print("Cam has no distortion coeffs in render_pass")
+        if camera.distortion_coefficients is not None:
+            print(f"Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
+        else:
+            print("Cam has no distortion coeffs in render_pass")
         if camera.device.type == 'cpu':
             # Preserve distortion_coefficients when moving to CUDA
             distortion_coeffs = getattr(camera, 'distortion_coefficients', None)
+            # Preserve intrinsics also
+            fx, fy, cx, cy = camera.get_camera_intrinsics()
             camera = camera.cuda()
-            if distortion_coeffs is not None:
-                camera.distortion_coefficients = distortion_coeffs
+            #camera.distortion_coefficients = distortion_coeffs
+            
 
         if getattr(camera, 'distortion_coefficients', None) is not None:
             print(f"Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
@@ -957,6 +959,7 @@ class Engine3DGRUT:
 
         is_use_spp = not is_first_pass and not self.use_depth_of_field and self.use_spp
         # Here is where the rays are generated (in a rendering pass)
+        print(f"Render pass: {type(camera)}")
         rays = self.raygen(camera, use_spp=is_use_spp)
 
         if is_first_pass:
@@ -1022,10 +1025,10 @@ class Engine3DGRUT:
         # check if cam has distortion coefficients else value error
         if getattr(camera, 'distortion_coefficients', None) is None:
             raise ValueError("Camera must have distortion coefficients for rendering.")
-        else:
-            print(f"IN RENDER: Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
+        print(f"IN RENDER first pass: Cam is {type(camera)}")
         renderbuffers = self.render_pass(camera, is_first_pass=True)
         while self.has_progressive_effects_to_render():
+            print(f"IN RENDER not first pass: Cam is {type(camera)}")
             renderbuffers = self.render_pass(camera, is_first_pass=False)
         return renderbuffers
 
@@ -1280,7 +1283,7 @@ class Engine3DGRUT:
 
         #TODO: Edit to access from the distortion camera object instead
         # testing to see if we can switch to fishye if the distortions are nonzero
-        if camera.__getattribute__("distortion_coefficients"):
+        if camera.distortion_coefficients != None:
             distortion_coeffs = camera.distortion_coefficients
             print(f"Using distortion coeff {distortion_coeffs[0]} for kb4 camera")
         else:
@@ -1310,6 +1313,7 @@ class Engine3DGRUT:
         
         else:
             # Generate rays using double sphere fisheye unprojection
+            print(f"KB$ cam: {type(camera)}")
             rays_o, rays_d = generate_rays_kb4(camera, distortion_coeffs, ray_grid)
         
         return RayPack(
@@ -1351,7 +1355,7 @@ class Engine3DGRUT:
 
         #TODO: Edit to access from the distortion camera object instead
         # testing to see if we can switch to fishye if the distortions are nonzero
-        if camera.__getattribute__("distortion_coefficients"):
+        if camera.distortion_coefficients is not None:
             distortion_coeffs = camera.distortion_coefficients
             print(f"Using distortion coeff {distortion_coeffs[0]} for fisheye camera")
         else:
@@ -1408,6 +1412,7 @@ class Engine3DGRUT:
             RayPack: Contains batched rays, where batch size is either 1 or
                 self.spp.batch_size if use_spp is True.
         """
+        print(f"Raygen: {type(camera)}")
         ray_batch_size = 1 if not use_spp else self.spp.batch_size
         rays = []
         distortion_coefficients = None
