@@ -48,8 +48,8 @@ class Playground:
         self.primitives = self.engine.primitives
         self.video_recorder = self.engine.video_recorder
         self.novel_view_renderer = self.engine.novel_view_renderer
-        self.video_h = 1080
-        self.video_w = 1920
+        self.video_h = 800
+        self.video_w = 1280
        
 
         """ When this flag is toggled on, the state of the canvas have changed and it needs to be re-rendered """
@@ -103,7 +103,7 @@ class Playground:
         ps.set_background_color((0., 0., 0.))
         ps.set_ground_plane_mode("none")
         ps.set_window_resizable(True)
-        ps.set_window_size(1920, 1080)
+        ps.set_window_size(1280, 800)
         ps.set_give_focus_on_show(True)
         ps.set_automatically_compute_scene_extents(False)
         ps.set_bounding_box(np.array([-1.5, -1.5, -1.5]), np.array([1.5, 1.5, 1.5]))

@@ -316,7 +316,7 @@ def generate_rays_kb4(
     """
     assert len(camera) == 1, "generate_rays_kb4() supports only camera input of batch size 1"
     if coords_grid is None:
-        coords_grid = generate_centered_pixel_coords(camera.width, camera.height, device=camera.device)
+        coords_grid = generate_centered_pixel_coords(width = 1280, height =  800, device=camera.device)
     else:
         assert camera.device == coords_grid[0].device, \
             f"Expected camera and coords_grid[0] to be on the same device, " \
@@ -328,6 +328,7 @@ def generate_rays_kb4(
     
     # Unpack = params
     k1, k2, k3, k4 = distortion_params[:4]
+    #k1, k2, k3, k4 = [0.0]*4
 
     fx, fy, cx, cy = camera.get_camera_intrinsics()
     #fx, fy, cx, cy = camera.get_camera_intrinsics()
