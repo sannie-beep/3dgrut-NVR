@@ -18,6 +18,8 @@ import os
 import copy
 import torch
 import kaolin
+import cv2
+import numpy as np
 from typing import List, Optional, Dict, Tuple, Callable
 from enum import IntEnum
 from pathlib import Path
@@ -28,8 +30,9 @@ from threedgrut.model.model import MixtureOfGaussians
 from threedgrut.model.background import BackgroundColor
 from threedgrut_playground.tracer import Tracer
 from threedgrut_playground.utils.mesh_io import (
-    load_mesh, load_materials, load_missing_material_info, create_procedural_mesh, create_quad_mesh
+    load_mesh, load_materials, load_missing_material_info, create_procedural_mesh, create_quad_mesh, create_cube_mesh
 )
+from threedgrut_playground.utils.create_aprilgrid import create_aprilgrid_texture
 from threedgrut_playground.utils.depth_of_field import DepthOfField
 from threedgrut_playground.utils.video_out import VideoRecorder
 from threedgrut_playground.utils.novel_view_renderer import NovelViewRenderer
@@ -265,7 +268,8 @@ class Primitives:
     SUPPORTED_MESH_EXTENSIONS = ['.obj', '.glb']     # Supported mesh file formats
     DEFAULT_REFRACTIVE_INDEX = 1.33                  # Default IOR for transparent materials
     PROCEDURAL_SHAPES: Dict[str, Callable[[torch.device], kaolin.rep.SurfaceMesh]] = dict(
-        Quad=create_quad_mesh
+        Quad=create_quad_mesh, 
+        Cube=create_cube_mesh
     )                                                # Supported procedural shapes -> constructor function
 
     def __init__(self,
@@ -347,8 +351,8 @@ class Primitives:
     def register_default_materials(self, device) -> Dict[str, PBRMaterial]:
         """ Registers default procedural materials which always load with the engine. """
         checkboard_res = 512
-        checkboard_square = 20
-        checkboard_texture = torch.tensor([0.25, 0.25, 0.25, 1.0],
+        checkboard_square = 100
+        checkboard_texture = torch.tensor([0.0, 0.0, 0.0, 1.0],
                                           device=device, dtype=torch.float32).repeat(checkboard_res, checkboard_res, 1)
         for i in range(checkboard_res // checkboard_square):
             for j in range(checkboard_res // checkboard_square):
@@ -357,6 +361,8 @@ class Primitives:
                 start_y = j * checkboard_square
                 end_y = min((j + 1) * checkboard_square, checkboard_res)
                 checkboard_texture[start_y:end_y, start_x:end_x, :3] = 0.5
+        
+        aprilgrid_texture = create_aprilgrid_texture(0.3, 800, device, 4, 7)
         default_materials = dict(
             solid=PBRMaterial(
                 material_id=0,
@@ -372,6 +378,16 @@ class Primitives:
             checkboard=PBRMaterial(
                 material_id=1,
                 diffuse_map=checkboard_texture.contiguous(),
+                diffuse_factor=torch.ones(4, device=device, dtype=torch.float32),
+                emissive_factor=torch.zeros(3, device=device, dtype=torch.float32),
+                metallic_factor=0.0,
+                roughness_factor=0.0,
+                transmission_factor=0.0,
+                ior=1.0
+            ),
+            aprilgrid=PBRMaterial(
+                material_id=2,
+                diffuse_map=aprilgrid_texture.contiguous(),
                 diffuse_factor=torch.ones(4, device=device, dtype=torch.float32),
                 emissive_factor=torch.zeros(3, device=device, dtype=torch.float32),
                 metallic_factor=0.0,
@@ -679,7 +695,7 @@ class Engine3DGRUT:
         # Rendered pixels are stored in framebuffer['rgb']
         ```
     """
-    AVAILABLE_CAMERAS = ['Pinhole', 'Equidistant Fisheye', 'Double Sphere Fisheye']
+    AVAILABLE_CAMERAS = ['Pinhole', 'Equidistant Fisheye', 'Double Sphere Fisheye', 'KB4']
     ANTIALIASING_MODES = ['4x MSAA', '8x MSAA', '16x MSAA', 'Quasi-Random (Sobol)']
 
     def __init__(self, gs_object: str, mesh_assets_folder: str, default_config: str):
@@ -992,9 +1008,37 @@ class Engine3DGRUT:
             rb['rgb'][mask] = 0.0
             rb['rgb_buffer'][mask] = 0.0
             rb['opacity'][mask] = 0.0
+        
+        #actual_rgb = (rb['rgb'].clone() * 255)
+        # actual_rgb = rb['rgb']
+        # print(f"RGB shape: {actual_rgb.shape}, First pixel: {actual_rgb[0, 0, 0, :]}")
+        # bgr = rb['rgb'].clone().detach().cpu().numpy().squeeze(0)
+        # #bgr = (bgr * 255).astype(np.uint8).squeeze(0) # Convert to numpy for OpenCV compatibility
+        # bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
+        # bgr = torch.from_numpy(bgr).to(self.device).unsqueeze(0)  # Convert back to tensor
+        # print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, 0,:]}")
+        # rb['rgb'] = bgr  # Store BGR image in the result
 
+
+        if is_first_pass:
+            bgr = self.convert_to_bgr(rb['rgb'])
+            #Save bgr as a npy file
+            np.save('bgr_image.npy', bgr)  # Save BGR image as numpy array
+            
         self._cache_last_state(camera=camera, renderbuffers=rb, canvas_size=[camera.height, camera.width])
         return rb
+    
+    def convert_to_bgr(self, rgb: torch.Tensor) -> np.ndarray:
+            """
+            Converts the RGB tensor to BGR numpy array to be published as imageMsg.data
+            with encoding bgr8.
+            """
+            bgr = rgb.clone().detach().cpu().numpy() 
+            bgr = (bgr * 255).astype(np.uint8).squeeze(0) # Convert to numpy for OpenCV compatibility
+            # Convert RGB to BGR for OpenCV compatibility
+            bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
+            #print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, :]}")
+            return bgr
 
     @torch.cuda.nvtx.range("render")
     def render(self, camera: DistortionCamera) -> Dict[str, torch.Tensor]:
@@ -1272,6 +1316,10 @@ class Engine3DGRUT:
                 - mask: Boolean mask of valid rays (H, W, 1)
         """
         print("kb4 raygen")
+        print(camera.width, camera.height, camera.device)
+        # pixel_y, pixel_x = generate_centered_pixel_coords(
+        #     1280, 800, device=camera.device
+        # )
         pixel_y, pixel_x = generate_centered_pixel_coords(
             camera.width, camera.height, device=camera.device
         )
@@ -1319,6 +1367,8 @@ class Engine3DGRUT:
         return RayPack(
             rays_ori=rays_o.reshape(1, camera.height, camera.width, 3).float(),
             rays_dir=rays_d.reshape(1, camera.height, camera.width, 3).float(),
+            # rays_ori=rays_o.reshape(1, 800, 1280, 3).float(),
+            # rays_dir=rays_d.reshape(1, 800, 1280, 3).float(),
             pixel_x=torch.round(pixel_x - 0.5).squeeze(-1),
             pixel_y=torch.round(pixel_y - 0.5).squeeze(-1)
         )
@@ -1429,11 +1479,15 @@ class Engine3DGRUT:
             if distortion_coefficients is None:
                 print("Using pinhole camera model for ray generation")
                 next_rays = self._raygen_pinhole(camera, jitter)
+            # elif distortion_coefficients is not None:
+            #     next_rays = self._raygen_kb4(camera, jitter)
             elif distortion_coefficients is not None and distortion_coefficients[5] == 0.0:
                 print("Using KB4 unprojection for ray generation")
                 next_rays = self._raygen_kb4(camera, jitter)
-            elif distortion_coefficients is not None and distortion_coefficients[5] != 0.0:
+            elif distortion_coefficients is not None and distortion_coefficients[5] != 0.0 and not self.camera_type == 'KB4':
                 next_rays = self._raygen_fisheye(camera, jitter)
+            elif self.camera_type == 'KB4':
+                next_rays = self._raygen_kb4(camera, jitter)
             else:
                 raise ValueError(f"Unknown camera type: {self.camera_type}")
             rays.append(next_rays)

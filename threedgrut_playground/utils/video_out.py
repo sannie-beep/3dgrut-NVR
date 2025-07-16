@@ -144,7 +144,7 @@ class VideoRecorder:
             frames_between_cameras=self.frames_between_cameras,
             interpolation=interpolation_mode
         )
-
+        frames = []
         for camera in tqdm(interpolated_path):
             if not hasattr(camera, 'distortion_coefficients') or camera.distortion_coefficients is None:
                 # give it the attribute
@@ -165,7 +165,7 @@ class VideoRecorder:
             rgb = self.renderer.render(camera)['rgb']
             #check if the camera has distortion coefficients
             
-
+            # TODO: Make a publisher for ecal rathe than writing to file
             if out_video is None:
                 out_video = cv2.VideoWriter(self.trajectory_output_path, cv2.VideoWriter_fourcc(*'mp4v'),
                                             self.video_fps, (rgb.shape[2], rgb.shape[1]), True)
@@ -173,7 +173,19 @@ class VideoRecorder:
             data = (data * 255).astype(np.uint8)
             data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
             out_video.write(data)
+            # also save the bgr buffers to a npz file
+            bgr_array = self.convert_to_bgr(rgb)
+            frames.append(bgr_array)
+        
+        frames = np.stack(frames, axis=0)
+        # Save the frames to a npz file
+        np.savez_compressed("./frames.npz", frames=frames)
+        print(f"Saved frames to ./frames.npz")
+
+
+
         out_video.release()
+        print(f"Saved video to {self.trajectory_output_path}")
 
     def render_continuous_trajectory(self):
         if len(self.trajectory) < 4:
@@ -219,6 +231,7 @@ class VideoRecorder:
             )
 
         out_video = None
+        frames = np.array([])
         for camera in tqdm(interpolated_path):
             rgb = self.renderer.render(camera)['rgb']
             if not hasattr(camera, 'distortion_coefficients') or camera.distortion_coefficients is None:
@@ -235,7 +248,20 @@ class VideoRecorder:
             data = (data * 255).astype(np.uint8)
             data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
             out_video.write(data)
+
+            # also save the bgr buffers to a npz file
+            bgr_array = self.convert_to_bgr(rgb)
+            frames.append(bgr_array)
+        
+        frames = np.stack(frames, axis=0)
+        # Save the frames to a npz file
+        np.savez_compressed("./frames.npz", frames=frames)
+        print(f"Saved frames to ./frames.npz")
+
+
+
         out_video.release()
+        print(f"Saved video to {self.trajectory_output_path}")
 
     def render_video(self):
         """
@@ -251,3 +277,17 @@ class VideoRecorder:
             self.render_linear_trajectory('catmull_rom')
         else:
             raise ValueError(f'Unknown mode: {self.mode}')
+        
+
+    def convert_to_bgr(self, rgb: torch.Tensor) -> np.ndarray:
+        """
+        Converts the RGB tensor to BGR numpy array to be published as imageMsg.data
+        with encoding bgr8.
+        """
+        bgr = rgb.clone().detach().cpu().numpy()
+        bgr.clip(0, 1, out=bgr)
+        bgr = (bgr * 255).astype(np.uint8).squeeze(0) # Convert to numpy for OpenCV compatibility
+        # Convert RGB to BGR for OpenCV compatibility
+        bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
+        #print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, :]}")
+        return bgr

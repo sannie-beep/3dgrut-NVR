@@ -160,22 +160,24 @@ def generate_fisheye_rays_double_sphere(
     pixel_y = pixel_y.to(camera.device, camera.dtype)
 
     fx, fy, cx, cy, xi, alpha = distortion_params[5:11]
-    print(f"In Fisheye: fx = {fx}, fy = {fy}, cx = {cx}, cy = {cy}")
+    print(f"BEF fx = {fx}, fy = {fy}, cx = {cx}, cy = {cy}")
+    #fx, fy, cx, cy = camera.get_camera_intrinsics()
+    #fx, fy = 614.8464965820313, 613.5963134765625
+    #print(f"AFT fx = {fx}, fy = {fy}, cx = {cx}, cy = {cy}")
 
     # Compute normalized image coordinates (m_x, m_y)
     m_x = (pixel_x - cx) / fx
     m_y = (pixel_y - cy) / fy
 
-    r2 = m_x * m_x + m_y * m_y
-    r2 = torch.clamp(r2, min=0.0)
+    r2 = (m_x * m_x) + (m_y * m_y)
     r = torch.sqrt(r2)
 
     # Double sphere model unprojection (see Usenko et al., 2018)
-    numerator = 1.0 - (alpha * alpha) * r2
-    inside = 1 - (2 * alpha - 1) * r2
+    numerator = 1.0 - ((alpha * alpha) * r2)
+    inside = 1 - ((2 * alpha - 1) * r2)
     denominator = alpha * torch.sqrt(torch.clamp(inside, min=0.0)) + 1 - alpha
     m_z = torch.where(denominator.abs() > eps, numerator / denominator, 0.0)
-    m_z = torch.clamp(m_z, min=-1.0, max=1.0)
+    #m_z = torch.clamp(m_z, min=-1.0, max=1.0)
 
     # Unprojection scalar
     scalar_numerator = m_z * xi + torch.sqrt((m_z * m_z) + (1 - xi * xi) * r2)
@@ -195,7 +197,8 @@ def generate_fisheye_rays_double_sphere(
     rays_dir = rays_dir.reshape(-1, 3)  # shape (H*W, 3)
     xi_shift = torch.tensor([0.0, 0.0, xi], device=rays_dir.device, dtype=rays_dir.dtype)
     xi_shift = xi_shift.view(1, 3)  # shape (1, 3)
-    rays_dir = rays_dir - xi_shift
+    #z-convention is opposite of the formulation in the paper so xi shift is added
+    rays_dir = rays_dir + xi_shift
 
     ray_dir = rays_dir.reshape(-1, 3)
     ray_orig = torch.zeros_like(ray_dir)
@@ -275,7 +278,7 @@ def estimate_theta_star(
     #start, end = theta_range[0], theta_range[1]
 
     num_steps = int((math.pi - 0.0) / step_size)
-    theta_vals = torch.linspace(0.0, 180.000, steps=num_steps, device=device, dtype=dtype)
+    theta_vals = torch.linspace(0.0, math.pi, steps=num_steps, device=device, dtype=dtype)
     d = lambda theta: theta + k1 * theta**2 + k2 * theta**5 + k3 * theta**7 + k4 * theta**9
     R = d(theta_vals)  # (num_steps,)
     print(R.shape, theta_vals.shape, ru.shape)
@@ -316,7 +319,8 @@ def generate_rays_kb4(
     """
     assert len(camera) == 1, "generate_rays_kb4() supports only camera input of batch size 1"
     if coords_grid is None:
-        coords_grid = generate_centered_pixel_coords(width = 1280, height =  800, device=camera.device)
+        print(camera.width, camera.height, camera.device)
+        coords_grid = generate_centered_pixel_coords(camera.width, camera.height, device=camera.device)
     else:
         assert camera.device == coords_grid[0].device, \
             f"Expected camera and coords_grid[0] to be on the same device, " \
@@ -333,8 +337,11 @@ def generate_rays_kb4(
     fx, fy, cx, cy = camera.get_camera_intrinsics()
     #fx, fy, cx, cy = camera.get_camera_intrinsics()
     # import sys
-    # sys.exit(f"MY COEFFS: {fx, fy, cx, cy, k1, k2, k3, k4}")
-             
+    print(f"KB4 COEFFS: {fx, fy, cx, cy, k1, k2, k3, k4}")
+    # fx, fy, cx, cy, k1, k2, k3, k4 = [614.8464965820313, 613.5963134765625, 939.4267578125, 585.2528076171875, -3.0282579245977104e-05,
+    #                 0.0002524006995372474,
+    #                 0.0007139311637729406,
+    #                 -9.387189493281767e-05,]
     #fx, fy, cx, cy = distortion_params[-4:]
     pixel_y, pixel_x = coords_grid
     pixel_x = pixel_x.to(camera.device, camera.dtype)
@@ -354,7 +361,7 @@ def generate_rays_kb4(
     r2 = (m_x * m_x) + (m_y * m_y)
     r2 = torch.clamp(r2, min=0.0)
     ru = torch.sqrt(r2)
-    print(f"RU: {ru}")
+    
 
     theta_star = estimate_theta_star(
         k1, k2, k3, k4,
@@ -362,7 +369,7 @@ def generate_rays_kb4(
         device=ru.device,
         dtype=ru.dtype
     )
-    #theta_star = ru
+    theta_star = ru
 
     sin_t = torch.sin(theta_star)
     cos_t = torch.cos(theta_star)

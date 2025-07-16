@@ -32,6 +32,7 @@ from threedgrut_playground.utils.video_out import VideoRecorder
 from threedgrut_playground.utils.novel_view_renderer import NovelViewRenderer
 from threedgrut_playground.utils.kaolin_future.conversions import polyscope_from_kaolin_camera, polyscope_to_kaolin_camera
 from threedgrut_playground.engine import Engine3DGRUT, OptixPrimitiveTypes
+import csv
 
 
 #################################
@@ -102,7 +103,7 @@ class Playground:
         ps.set_max_fps(-1)
         ps.set_background_color((0., 0., 0.))
         ps.set_ground_plane_mode("none")
-        ps.set_window_resizable(True)
+        ps.set_window_resizable(False)
         ps.set_window_size(1280, 800)
         ps.set_give_focus_on_show(True)
         ps.set_automatically_compute_scene_extents(False)
@@ -142,7 +143,11 @@ class Playground:
         """ Render a frame using the polyscope gui camera and window size """
         if window_w is None or window_h is None:
             window_w, window_h = ps.get_window_size()
-
+        if self.novel_view_renderer.is_loaded():
+            camera = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+            window_w, window_h = camera.width, camera.height
+        
+        ps.set_window_size(window_w, window_h)
         # Update polyscope camera with params from gui
         view_params = ps.CameraParameters(
             ps.CameraIntrinsics(fov_vertical_deg=self.engine.camera_fov, aspect=window_w / window_h),
@@ -189,7 +194,10 @@ class Playground:
         # Get the current kaolin cam hfov and vfov
         
 
-        window_w, window_h = ps.get_window_size()
+        if self.novel_view_renderer.is_loaded():
+            camera = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+            window_w, window_h = camera.width, camera.height
+        else: window_w, window_h = ps.get_window_size()
         if self.distortions:
             distortions = self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None
             # if distortions[5] == 0.0:
@@ -423,15 +431,20 @@ class Playground:
                                                                            self.video_recorder.trajectory_output_path)
             if (psim.Button("Add Camera")):
                 fx, fy, cx, cy = self.novel_view_renderer.get_camera_intrinsics_at_index(self.selected_camera_idx)
+                cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+                cam_w, cam_h = cam.width, cam.height
                 print(f"[{fx, fy, cx, cy}]")
                 camera = polyscope_to_kaolin_camera(
-                    ps.get_view_camera_parameters(), width=self.video_w, height=self.video_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
+                    ps.get_view_camera_parameters(), width=cam_w, height=cam_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
                     fx = fx, fy = fy, cx = cx, cy = cy
                 )
                 camera.set_cam_intr(fx, fy, cx, cy)
                 print(f"JFBERVIWQB4THVE Added to trajectory w dist:{camera.distortion_coefficients}")
                 print(f"Cam added to trajectory has intrinsics: {camera.get_camera_intrinsics()}")
                 self.video_recorder.add_camera(camera)
+                view_mat, sixdof_pose, view_mat_string = self.get_view_matrix_and_pose()
+                #self.save_pose_to_csv(view_mat, sixdof_pose, view_mat_string, csv_filename="video_trajectory.csv")
+                
             psim.SameLine()
             if (psim.Button("Reset")):
                 self.video_recorder.reset_trajectory()
@@ -611,20 +624,9 @@ class Playground:
                 self.scene_center = [0.999029278755188, 0.00626010866835713, 0.043603427708149, 0.0137977302074432, 0.00638079596683383, -0.99997615814209, -0.00262921908870339, -0.265371531248093, 0.0435859337449074, 0.00290489150211215, -0.999045491218567, 2.19675970077515, 0.0, 0.0, 0.0, 1.0]
                 
             if self.calibration_loaded and psim.Button("Save Scene Center"):
-                params_string = ps.get_view_as_json()
-                params_json = json.loads(params_string)
-                # Grab the view matrix
-                view_mat = params_json.get("viewMat", None)
-                self.scene_center = view_mat if view_mat is not None else self.scene_center
-                self.novel_view_renderer.center_view_matrix = self.scene_center
-                sixdof_pose = self.novel_view_renderer.convert_scene_center_to_6dof_pose()
-                view_mat_string = str(view_mat) if view_mat is not None else None
+                view_mat, sixdof_pose, view_mat_string = self.get_view_matrix_and_pose()
                 print(f"View matrix: {view_mat}")
-                if view_mat is not None:
-                    with open ("./calibration_files/saved_views/view.txt", "w") as f:
-                        f.write(f"View matrix: {view_mat_string}\n")
-                        f.write(f"6DOF pose: {sixdof_pose}\n")
-                psim.Text(f"6DOF pose: {sixdof_pose}")
+                self.save_pose_to_csv(view_mat, sixdof_pose, view_mat_string)
                 print(f"6DOF pose: {sixdof_pose}")
             
             psim.SameLine()        
@@ -690,6 +692,29 @@ class Playground:
 
             psim.PopItemWidth()
             psim.TreePop()
+
+    def save_pose_to_csv(self, view_mat, sixdof_pose, view_mat_string, csv_filename="new_path.csv"):
+        csv_path = "./calibration_files/trajectories/" + csv_filename
+        # Ensure sixdof_pose is a flat list or tuple of 6 values
+        if sixdof_pose is not None and len(sixdof_pose) == 6:
+            file_exists = os.path.isfile(csv_path)
+            with open(csv_path, "a", newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["x", "y", "z", "roll", "pitch", "yaw"])
+                writer.writerow(sixdof_pose)
+        psim.Text(f"6DOF pose: {sixdof_pose}")
+
+    def get_view_matrix_and_pose(self):
+        params_string = ps.get_view_as_json()
+        params_json = json.loads(params_string)
+                # Grab the view matrix
+        view_mat = params_json.get("viewMat", None)
+        self.scene_center = view_mat if view_mat is not None else self.scene_center
+        self.novel_view_renderer.center_view_matrix = self.scene_center
+        sixdof_pose = self.novel_view_renderer.convert_scene_center_to_6dof_pose()
+        view_mat_string = str(view_mat) if view_mat is not None else None
+        return view_mat,sixdof_pose,view_mat_string
 
 
 
@@ -1113,56 +1138,87 @@ class Playground:
             object_transform = obj.transform
             transform_changed = False
             psim.PushItemWidth(100)  # button_width
-            if psim.Button("Reset"):
+            # if psim.Button("Reset"):
+            #     object_transform.reset()
+            #     transform_changed = True
+            # psim.PopItemWidth()
+            if psim.Button("Reset to 15cm square size"):
                 object_transform.reset()
+                object_transform.sx = 1.410
+                object_transform.sy = 0.825
                 transform_changed = True
             psim.PopItemWidth()
 
-            psim.PushItemWidth(350)
-            changed, values = psim.SliderFloat3(
-                "Translate",
-                [object_transform.tx, object_transform.ty, object_transform.tz],
-                v_min=-5.0, v_max=5.0,
-                format="%.4f",
-                power=1.0
+            if not hasattr(self, "square_size"):
+                self.square_size = 15.0
+            
+            _, self.square_size = psim.InputFloat(
+                "Set Square Size:",
+                self.square_size,
+                format="%.2f"
             )
-            if changed:
-                object_transform.tx = values[0]
-                object_transform.ty = values[1]
-                object_transform.tz = values[2]
-                transform_changed = True
-
-            changed, values = psim.SliderFloat3(
-                "Rotate",
-                [object_transform.rx, object_transform.ry, object_transform.rz],
-                v_min=-180.0, v_max=180.0,
-                format="%.3f",
-                power=1.0
-            )
-            if changed:
-                object_transform.rx = values[0]
-                object_transform.ry = values[1]
-                object_transform.rz = values[2]
-                transform_changed = True
-
-            changed, values = psim.SliderFloat3(
-                "Scale",
-                [object_transform.sx, object_transform.sy, object_transform.sz],
-                v_min=-5.0, v_max=5.0,
-                format="%.4f",
-                power=1.0
-            )
-            if changed:
-                object_transform.sx = values[0]
-                object_transform.sy = values[1]
-                object_transform.sz = values[2]
+            psim.SameLine()
+            if psim.Button("Square size (cm)"):
+                sy, sx = self.calculate_sx_and_sy(self.square_size)
+                object_transform.sx = sx
+                object_transform.sy = sy
                 transform_changed = True
             psim.PopItemWidth()
 
             if transform_changed:
                 self.primitives.rebuild_bvh_if_needed(force=True, rebuild=False)
                 self.is_force_canvas_dirty = True
+            
             psim.TreePop()
+
+    def calculate_sx_and_sy(self, square: float):
+            sx = (square * 4 + (square *0.3) * 5) * 0.01
+            sy = (square * 7 + (square *0.3) * 8) * 0.01
+            return sx, sy
+
+
+
+            # psim.PushItemWidth(350)
+            # changed, values = psim.SliderFloat3(
+            #     "Translate",
+            #     [object_transform.tx, object_transform.ty, object_transform.tz],
+            #     v_min=-5.0, v_max=5.0,
+            #     format="%.4f",
+            #     power=1.0
+            # )
+            # if changed:
+            #     object_transform.tx = values[0]
+            #     object_transform.ty = values[1]
+            #     object_transform.tz = values[2]
+            #     transform_changed = True
+
+            # changed, values = psim.SliderFloat3(
+            #     "Rotate",
+            #     [object_transform.rx, object_transform.ry, object_transform.rz],
+            #     v_min=-180.0, v_max=180.0,
+            #     format="%.3f",
+            #     power=1.0
+            # )
+            # if changed:
+            #     object_transform.rx = values[0]
+            #     object_transform.ry = values[1]
+            #     object_transform.rz = values[2]
+            #     transform_changed = True
+
+            # changed, values = psim.SliderFloat3(
+            #     "Scale",
+            #     [object_transform.sx, object_transform.sy, object_transform.sz],
+            #     v_min=-5.0, v_max=5.0,
+            #     format="%.4f",
+            #     power=1.0
+            # )
+            # if changed:
+            #     object_transform.sx = values[0]
+            #     object_transform.sy = values[1]
+            #     object_transform.sz = values[2]
+            #     transform_changed = True
+            # psim.PopItemWidth()
+            
 
     def _draw_diffuse_pbr_settings_widget(self, obj):
         has_single_material = torch.min(obj.material_id) == torch.max(obj.material_id)
