@@ -126,7 +126,7 @@ class VideoRecorder:
             self.renderer.use_depth_of_field = old_use_dof
             self.renderer.depth_of_field.focus_z = old_focus_z
 
-    def render_linear_trajectory(self, interpolation_mode='polynomial'):
+    def render_linear_trajectory(self, interpolation_mode='polynomial', cam_name: str = "CamX"):
         if len(self.trajectory) < 2:
             raise ValueError('Rendering a path trajectory requires at least 2 cameras.')
         elif interpolation_mode == 'catmull_rom' and len(self.trajectory) < 4:
@@ -161,7 +161,7 @@ class VideoRecorder:
             else:
                 print(f"Camera {camera} has intrinsic parameters: {camera.get_camera_intrinsics()}")
             
-            print(f"CAM TYPE IN VID: {type(camera)}")
+            #print(f"CAM TYPE IN VID: {type(camera)}")
             rgb = self.renderer.render(camera)['rgb']
             #check if the camera has distortion coefficients
             
@@ -179,8 +179,10 @@ class VideoRecorder:
         
         frames = np.stack(frames, axis=0)
         # Save the frames to a npz file
-        np.savez_compressed("./frames.npz", frames=frames)
-        print(f"Saved frames to ./frames.npz")
+        cam_name = cam_name if cam_name else "CamX" 
+        frames_filename = f"./{cam_name}.npz"
+        np.savez_compressed(frames_filename, frames=frames)
+        print(f"Saved frames to {frames_filename}")
 
 
 
@@ -263,18 +265,19 @@ class VideoRecorder:
         out_video.release()
         print(f"Saved video to {self.trajectory_output_path}")
 
-    def render_video(self):
+    def render_video(self, cam_name: str = "CamX"):
         """
         Renders the trajectory to a video file, according to the set mode (see init()).
         """
+        
         if self.mode == 'depth_of_field':
             self.render_dof_trajectory()
         elif self.mode == 'cyclic':
             self.render_continuous_trajectory()
         elif self.mode == 'path_smooth':
-            self.render_linear_trajectory('polynomial')
+            self.render_linear_trajectory('polynomial', cam_name=cam_name)
         elif self.mode == 'path_spline':
-            self.render_linear_trajectory('catmull_rom')
+            self.render_linear_trajectory('catmull_rom', cam_name=cam_name)
         else:
             raise ValueError(f'Unknown mode: {self.mode}')
         

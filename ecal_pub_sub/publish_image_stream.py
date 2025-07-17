@@ -4,7 +4,7 @@ import os
 import sys
 import time
 
-
+import argparse
 import numpy as np
 
 #sys.path.insert(0, '/usr/lib/python3/dist-packages')
@@ -23,6 +23,12 @@ capnp.add_import_hook()
 
 import image_capnp as eCALImage
 
+
+parser = argparse.ArgumentParser(description="Publish image stream from a sequence of images.")
+parser.add_argument('--cam_name', type=str, required=True, help='Camera name to load frames from (default: CamX) ' \
+'Enter CamA, CamB, CamC or CamD, based on what .npz file you want to load from.')
+args = parser.parse_args()
+
 def load_sample_image():
     # if there's a file called bgr_image.npy, load it
     if os.path.exists('./bgr_image.npy'):
@@ -34,7 +40,10 @@ def load_sample_image():
     return sample_img.astype(np.uint8)
 
 def load_frames_npz(cam_name: str = "CamX"):
-    data = np.load('./frames.npz')
+    filepath = f'./{cam_name}.npz'
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"No frames found for camera {cam_name}. Please ensure the file {filepath} exists.")
+    data = np.load(filepath)
     frames = data['frames']
     #print("Frames shape:", frames.shape)
     return frames
@@ -61,7 +70,14 @@ def build_image_message(bgr8_array : np.ndarray, index: int):
     #print("Success!")
     return msg
 
-
+def register_camera_name(cam_name: str):
+    """
+    Registers the camera name to initialise the publisher.
+    """
+    if not cam_name.startswith("Cam"):
+        raise ValueError(f"Invalid camera name: {cam_name}. It should start with 'Cam'.")
+    topic_name = "S0/" + cam_name.lower()
+    return topic_name, cam_name
 
 
 def main():
@@ -73,11 +89,14 @@ def main():
     
     ecal_core.initialize(sys.argv, "publish_img_stream")
     ecal_core.set_process_state(1, 1, "Image Publisher Running")
+    args = parser.parse_args()
+    topic_name, cam_name = register_camera_name(args.cam_name)
+    pub = CapnpPublisher(topic_name, "Image")
 
-    pub = CapnpPublisher("S0/camb", "CamB")
+    #pub = CapnpPublisher("S0/camc", "Image")
 
     seq = 0
-    frames = load_frames_npz()
+    frames = load_frames_npz(cam_name="CamB")
     num_frames = frames.shape[0]
     ended = False
     while ecal_core.ok():
@@ -86,14 +105,15 @@ def main():
             #print(f"Publishing frame {i}")
             msg = build_image_message(frame, i)
             pub.send(msg.to_bytes())
-            if i == num_frames:
+            if i == num_frames - 1:
                 ended = True
                 break
-        # if ended:
-        #     print("Published all frames, exiting...")
-        #     break
+            
+        if ended:
+            print("Published all frames, exiting...")
+            break
     
-        break
+       
            
         
     #     time.sleep(0.01)  # 100 Hz
@@ -102,3 +122,4 @@ def main():
 
 if __name__ == "__main__":
      main()
+

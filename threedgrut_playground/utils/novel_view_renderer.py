@@ -10,10 +10,34 @@ import functools
 from scipy.spatial.transform import Rotation as R
 
 # UTILITIES:
-# 1. build_extrinsic_mat_from_rotation_translation
-# - Constructs a 4x4 extrinsic matrix from rotation and translation, overriding zero-rotation for Cam 0 if needed,
+# 1. view_matrix_from_rotation_translation
+# - Constructs a 4x4 view matrix from rotation and translation, 
+# 2. build_extrinsic_mat_from_rotation_translation
+#   Constructs a 4x4 view matrix from rotation and translation, overriding zero-rotation for Cam 0 if needed,
 #   and applying a global offset so all cameras shift together
-# 2. 
+# 3. six_dof_pose_to_4x4_world_t_body_mat
+#   Converts a 6-DOF pose (x, y, z, roll, pitch, yaw) into a 4x4 world_T_body transformation matrix.
+
+
+VILOTA_CAM_MAP = {
+    "DP180-": {
+        "device_prefix": "DP180-",
+        "num_cams": 3,
+        "cam_names": ["CamB", "CamC", "CamD"],        
+    },
+    "DP180IP": {
+        "device_prefix": "DP180-",
+        "num_cams": 4,
+        "cam_names": ["CamA", "CamB", "CamC", "CamD"],
+    },
+    # Yet to add support for VKL to account for to camera socket extrinsics
+    "VKL": {
+        "device_prefix": "VKL-",
+        "num_cams": 4,
+        "cam_names": ["CamA", "CamB", "CamC", "CamD"],
+    }
+}
+
 def view_matrix_from_rotation_translation(
             rotation: List,
             translation: List,
@@ -79,7 +103,6 @@ def build_extrinsic_mat_from_rotation_translation(
         # Assuming rotation/translation denote world-to-camera extrinsic:
         #t = t - R @ offset_arr
         
-        #t = t - offset_arr # TODO: remove this lol after seeing if it works in polyscope
 
       
         # Build view matrix
@@ -171,6 +194,13 @@ class NovelViewRenderer:
     def get_camera_at_index(self, index: int) -> Camera:
         """Returns the camera at the specified index."""
         return self.v_device.get_camera_at_index(index)
+    
+    @ensure_loaded
+    def get_cam_name_at_index(self, index: int) -> str:
+        """Returns the camera name at the specified index."""
+        if index < 0 or index >= self.v_device.get_camera_count():
+            raise IndexError(f"Camera index {index} out of range.")
+        return self.v_device.get_cam_name(index)
     
     @ensure_loaded
     def get_all_cameras(self) -> List[Camera]:
@@ -309,7 +339,7 @@ class NovelViewRenderer:
         """Returns the name and serial number of the Vilota device."""
         if not self.is_loaded() or self.v_device is None:
             return "Vilota device not loaded."
-        return f"Device Name: {self.v_device.name}, Serial No: {self.v_device.serial_no}"
+        return f"Device Name: {self.v_device.name},\nProduct name: {self.v_device.product_name}"
     
 
 class VilotaDevice:
@@ -318,7 +348,7 @@ class VilotaDevice:
     def __init__(self, calibration_file: str):
         self.calibration_file = calibration_file
         self.name = os.path.basename(calibration_file).split('.')[0]
-        self.serial_no = "Unknown"  # Placeholder for serial number, if available
+        self.product_name = "Unknown"  # Placeholder for serial number, if available
         self.cameras = {}
         self.extrinsics = {}
         self.loaded = False
@@ -332,6 +362,7 @@ class VilotaDevice:
         device.loader = Loader(path)
         try:
             extrinsics, cameras = device.loader.load_all_cameras()
+            device.name, device.product_name = device.loader.load_device_info()
             device.loaded = True
             device.cameras = cameras
             device.extrinsics = extrinsics
@@ -355,6 +386,17 @@ class VilotaDevice:
 
     def get_camera_count(self) -> int:
         return len(self.cameras)
+    
+    def get_cam_name(self, index: int) -> str:
+        if self.name.startswith("DP180-"):
+            return VILOTA_CAM_MAP["DP180-"]["cam_names"][index]
+        elif self.name.startswith("DP180IP"):
+            print(VILOTA_CAM_MAP["DP180IP"]["cam_names"])
+            return VILOTA_CAM_MAP["DP180IP"]["cam_names"][index]
+        elif self.product_name_name.startswith("VKL-"):
+            return VILOTA_CAM_MAP["VKL"]["cam_names"][index]
+        else:
+            raise ValueError(f"Unknown camera index {index} for device {self.name}.")
     
     def get_cam_distortions(self) -> List[float]:
         """ Returns a list of distortion coefficients for all cameras. """
@@ -465,6 +507,23 @@ class Loader:
             raise ValueError("No camera data found in the calibration file.")
         
         return num_cameras, camera_data
+    
+    def load_device_info(self) -> Tuple[str, str]:
+        """
+        Loads the device name and serial number from the calibration file.
+        Returns:
+            Tuple[str, str]: Device name and serial number.
+        """
+        if not os.path.exists(self.calibration_file):
+            raise FileNotFoundError(f"Calibration file {self.calibration_file} does not exist.")
+        
+        with open(self.calibration_file, 'r') as file:
+            data = json.load(file)
+        
+        device_name = data.get('deviceName', 'Unknown')
+        product_name = data.get('productName', 'Unknown')
+        
+        return device_name, product_name
 
     def parse_cali_json_to_camera_params(
             self,
@@ -686,3 +745,4 @@ if __name__ == "__main__":
     #test_novel_view_renderer_load("dp180_1.json")
     #test_novel_view_renderer_load("dp180_2.json")
     #test_novel_view_renderer_load("vk180.json")
+

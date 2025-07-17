@@ -451,7 +451,10 @@ class Playground:
             psim.SameLine()
             if (psim.Button("Render Video")):
                 try:
-                    self.video_recorder.render_video()
+                    if self.novel_view_renderer.is_loaded() and self.selected_camera_idx is not None:
+                        idx = self.selected_camera_idx
+                        cam_name = self.novel_view_renderer.get_cam_name_at_index(idx)
+                    self.video_recorder.render_video(cam_name=cam_name if self.novel_view_renderer.is_loaded() else None)
                 except ValueError as e: # Catch and display any warnings for incorrect input
                     ps.warning(f'{e}')
 
@@ -593,7 +596,7 @@ class Playground:
 
                 for idx, (camera) in self.novel_view_renderer.get_all_cameras().items():
                     # Draw a button to select this camera
-                    if psim.Button(f"Select Camera {idx}"):
+                    if psim.Button(f"Select {self.novel_view_renderer.get_cam_name_at_index(idx)}"):
                         self.selected_camera_idx = idx
                         psim.SameLine()
                         self._draw_single_vk_cam(idx, camera)
@@ -1256,19 +1259,19 @@ class Playground:
             ps.look_at_dir(eye, target, up, fly_to=True)
         
         xi_alpha = "Not Fisheye"
-        if cam.distortion_coefficients is not None:
+        if cam.distortion_coefficients[5] != 0.0:
             xi = round(float(cam.distortion_coefficients[9]), 2)
             alpha = round(float(cam.distortion_coefficients[10]), 2)
             xi_alpha = f"xi: {xi}, alpha: {alpha}"
         
-        if cam is not None:
-            fx, fy, cx, cy = cam.intrinsics.focal_x, cam.intrinsics.focal_y, cam.intrinsics.x0, cam.intrinsics.y0
-            window_w, window_h = cam.intrinsics.width, cam.intrinsics.height
-            h_fov = 2 * math.atan2(window_w / 2, fx) * (180 / math.pi)
-            v_fov = 2 * math.atan2(window_h / 2, fy) * (180 / math.pi)
+        # if cam is not None:
+        #     fx, fy, cx, cy = cam.intrinsics.focal_x, cam.intrinsics.focal_y, cam.intrinsics.x0, cam.intrinsics.y0
+        #     window_w, window_h = cam.intrinsics.width, cam.intrinsics.height
+        #     h_fov = 2 * math.atan2(window_w / 2, fx) * (180 / math.pi)
+        #     v_fov = 2 * math.atan2(window_h / 2, fy) * (180 / math.pi)
             
-            psim.Text(f"Horizontal FOV: {h_fov:.2f} degrees")
-            psim.Text(f"Vertical FOV: {v_fov:.2f} degrees")
+        #     psim.Text(f"Horizontal FOV: {h_fov:.2f} degrees")
+        #     psim.Text(f"Vertical FOV: {v_fov:.2f} degrees")
         
         psim.SameLine()
         psim.Text(f"(Selected), {xi_alpha}")

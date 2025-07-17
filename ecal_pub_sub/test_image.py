@@ -8,6 +8,7 @@ import capnp
 import numpy as np
 import cv2
 
+
 sys.path.append('/opt/vilota/bin')
 sys.path.append('/opt/vilota/python')
 
