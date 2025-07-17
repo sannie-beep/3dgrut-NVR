@@ -39,3 +39,5 @@ video_outputs/
 *.mp4
 *.obj
 *.ply
+*.npy
+*.npz
