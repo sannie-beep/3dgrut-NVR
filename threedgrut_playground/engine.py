@@ -716,7 +716,7 @@ class Engine3DGRUT:
         """ Component managing the depth of field settings in the scene """
         self.depth_of_field = DepthOfField(aperture_size=0.01, focus_z=1.0)
         """ Toggles antialiasing on / off """
-        self.use_spp = True
+        self.use_spp = False
         """ Currently set antialiasing mode """
         self.antialiasing_mode = '4x MSAA'
         """ Component managing the antialiasing settings in the scene """
@@ -726,7 +726,7 @@ class Engine3DGRUT:
         """ Maximum number of PBR material bounces (transmissions & refractions, reflections) """
         self.max_pbr_bounces = 15
         """ If enabled, will use the optix denoiser as post-processing """
-        self.use_optix_denoiser = True
+        self.use_optix_denoiser = False
         """ Enables / disables gaussian rendering """
         self.disable_gaussian_tracing = False
         """ If enabled, blends a white background with non-opaque pixels """
@@ -741,9 +741,9 @@ class Engine3DGRUT:
             scene_scale=scene_scale,
             device=self.device
         )
-        # self.primitives.add_primitive(
-        #     geometry_type='Sphere', primitive_type=OptixPrimitiveTypes.GLASS, device=self.device
-        # )
+        self.primitives.add_primitive(
+            geometry_type='Quad', primitive_type=OptixPrimitiveTypes.DIFFUSE, device=self.device
+        )
         self.rebuild_bvh(self.scene_mog)
         if self.envmap is not None:
             self.force_white_bg = False

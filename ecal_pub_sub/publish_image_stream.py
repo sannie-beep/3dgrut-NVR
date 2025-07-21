@@ -96,7 +96,7 @@ def main():
     #pub = CapnpPublisher("S0/camc", "Image")
 
     seq = 0
-    frames = load_frames_npz(cam_name="CamB")
+    frames = load_frames_npz(cam_name = cam_name)
     num_frames = frames.shape[0]
     ended = False
     while ecal_core.ok():

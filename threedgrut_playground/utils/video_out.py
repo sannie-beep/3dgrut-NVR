@@ -166,13 +166,13 @@ class VideoRecorder:
             #check if the camera has distortion coefficients
             
             # TODO: Make a publisher for ecal rathe than writing to file
-            if out_video is None:
-                out_video = cv2.VideoWriter(self.trajectory_output_path, cv2.VideoWriter_fourcc(*'mp4v'),
-                                            self.video_fps, (rgb.shape[2], rgb.shape[1]), True)
-            data = rgb[0].clip(0, 1).detach().cpu().numpy()
-            data = (data * 255).astype(np.uint8)
-            data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
-            out_video.write(data)
+            # if out_video is None:
+            #     out_video = cv2.VideoWriter(self.trajectory_output_path, cv2.VideoWriter_fourcc(*'mp4v'),
+            #                                 self.video_fps, (rgb.shape[2], rgb.shape[1]), True)
+            # data = rgb[0].clip(0, 1).detach().cpu().numpy()
+            # data = (data * 255).astype(np.uint8)
+            # data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
+            # out_video.write(data)
             # also save the bgr buffers to a npz file
             bgr_array = self.convert_to_bgr(rgb)
             frames.append(bgr_array)
@@ -181,12 +181,14 @@ class VideoRecorder:
         # Save the frames to a npz file
         cam_name = cam_name if cam_name else "CamX" 
         frames_filename = f"./{cam_name}.npz"
+        #np.savez_compressed(frames_filename, frames=frames)
         np.savez_compressed(frames_filename, frames=frames)
         print(f"Saved frames to {frames_filename}")
 
 
-
-        out_video.release()
+        import sys
+        sys.exit(f"Saved frames to {frames_filename} and exiting for now, please check the file.")
+        #out_video.release()
         print(f"Saved video to {self.trajectory_output_path}")
 
     def render_continuous_trajectory(self):

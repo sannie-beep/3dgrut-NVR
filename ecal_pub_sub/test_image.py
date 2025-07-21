@@ -4,6 +4,18 @@ import os
 import sys
 import time
 
+import argparse
+import numpy as np
+
+#sys.path.insert(0, '/usr/lib/python3/dist-packages')
+import ecal.core.core as ecal_core
+
+sys.path.append('/opt/vilota/bin')
+sys.path.append('/opt/vilota/python')
+import os
+import sys
+import time
+
 import capnp
 import numpy as np
 import cv2
@@ -110,7 +122,7 @@ def main():
     n = len(sys.argv)
     topic_string=""
     if n == 1:
-        topics = ["S0/camb"]
+        topics = ["S0/camd"]
     elif n >= 2:
         topics = []
         for i in range(1, n):
