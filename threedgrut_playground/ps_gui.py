@@ -569,6 +569,7 @@ class Playground:
                 psim.SameLine()
                 if psim.Button("Reload Calibration"):
                     try:
+                        self.selected_camera_idx = None
                         self.calibration_loaded = False  # Reset the flag to allow reloading
                         self.novel_view_renderer.load_device(reload=True)
                         self._novel_view_calib_status = f"Reloaded {self.novel_view_renderer.get_camera_count()} cameras from {calibration_path}"
@@ -589,7 +590,7 @@ class Playground:
             
             if getattr(self, "selected_camera_idx", None) is None:
                 # If no camera is selected, select the first one by default
-                self.selected_camera_idx = 1    
+                self.selected_camera_idx = 0    
             # # If calibration is loaded, show the camera controls
             if self.calibration_loaded and psim.TreeNode("Device loaded"):
                 psim.Text(self.novel_view_renderer.get_device_name_and_serial_no())

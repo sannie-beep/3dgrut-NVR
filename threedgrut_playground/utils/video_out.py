@@ -174,8 +174,8 @@ class VideoRecorder:
             # data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
             # out_video.write(data)
             # also save the bgr buffers to a npz file
-            bgr_array = self.convert_to_bgr(rgb)
-            frames.append(bgr_array)
+            yuv420_arr = self.convert_to_yuv420(rgb)
+            frames.append(yuv420_arr)
         
         frames = np.stack(frames, axis=0)
         # Save the frames to a npz file
@@ -254,8 +254,9 @@ class VideoRecorder:
             out_video.write(data)
 
             # also save the bgr buffers to a npz file
-            bgr_array = self.convert_to_bgr(rgb)
-            frames.append(bgr_array)
+            #bgr_array = self.convert_to_bgr(rgb)
+            yuv420_arr = self.convert_to_yuv420(rgb)
+            frames.append(yuv420_arr)
         
         frames = np.stack(frames, axis=0)
         # Save the frames to a npz file
@@ -296,3 +297,16 @@ class VideoRecorder:
         bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
         #print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, :]}")
         return bgr
+    
+    def convert_to_yuv420(self, rgb: torch.Tensor) -> np.ndarray:
+        """
+        Converts the RGB tensor to YUV420 numpy array to be published as imageMsg.data
+        with encoding bgr8.
+        """
+        rgb_tensor= rgb.clone().detach().cpu().numpy()
+        rgb_tensor.clip(0, 1, out=rgb_tensor)
+        rgb_tensor = (rgb_tensor * 255).astype(np.uint8).squeeze(0) # Convert to numpy for OpenCV compatibility
+        # Convert RGB to BGR for OpenCV compatibility
+        yuv420 = cv2.cvtColor(rgb_tensor, cv2.COLOR_RGB2YUV_I420)
+        #print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, :]}")
+        return yuv420

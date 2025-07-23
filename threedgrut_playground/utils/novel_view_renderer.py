@@ -391,7 +391,7 @@ class VilotaDevice:
         if self.name.startswith("DP180-"):
             return VILOTA_CAM_MAP["DP180-"]["cam_names"][index]
         elif self.name.startswith("DP180IP"):
-            print(VILOTA_CAM_MAP["DP180IP"]["cam_names"])
+            
             return VILOTA_CAM_MAP["DP180IP"]["cam_names"][index]
         elif self.product_name_name.startswith("VKL-"):
             return VILOTA_CAM_MAP["VKL"]["cam_names"][index]

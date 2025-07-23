@@ -54,6 +54,7 @@ import ecal.core.core as ecal_core
 
 from capnp_publisher import CapnpPublisher
 import capnp
+import cv2
 
 # Ensure Cap'n Proto imports work
 sys.path.append(os.path.join(os.path.dirname(__file__), '../vk_sdk/capnp'))
@@ -70,6 +71,15 @@ def create_publisher(cam_name: str, fps: int = 30) -> CapnpPublisher:
     pub = CapnpPublisher(topic, "Image")
     return pub
 
+def convert_bgr_to_yuv420(bgr: np.ndarray) -> np.ndarray:
+        """
+        Converts the BGR array loaded from the file to YUV420 numpy array to be published as imageMsg.data
+        with encoding yuv420
+        """
+        
+        yuv420 = cv2.cvtColor(bgr, cv2.COLOR_BGR2YUV_I420)
+
+        return yuv420
     
 
 def load_frames_npz(cam_name: str = "CamX"):
@@ -83,7 +93,7 @@ def load_frames_npz(cam_name: str = "CamX"):
 
 
 
-def build_image_message(bgr8_array : np.ndarray, index: int):
+def build_image_message(img_array : np.ndarray, index: int, cam_index:int, name:str, encoding:str):
     """
     Builds a Capnp image message from a (h, w, 3) numpy array
     representing one single image in the sequence indexed by an int
@@ -95,10 +105,17 @@ def build_image_message(bgr8_array : np.ndarray, index: int):
     msg = eCALImage.Image.new_message()
     msg_header = msg.header
     msg_header.seq = index
-    msg_header.stampMonotonic = index # * gap in nanoseconds ( inverse of framerate in nanoseconds)
-    msg.encoding = eCALImage.Image.Encoding.bgr8
-    msg.data = bgr8_array.tobytes()
-    msg.height, msg.width = bgr8_array.shape[0], bgr8_array.shape[1]
+    msg_header.stampMonotonic = msg.header.seq * int(300e6)
+    msg.encoding = eCALImage.Image.Encoding.yuv420
+    msg.width, msg.height = img_array.shape[1], img_array.shape[0]
+    if encoding == "bgr8":
+        img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2YUV_I420)
+    msg.data = img_array.tobytes()
+    msg.exposureUSec = 180
+    msg.gain = 180
+    msg.sensorIdx = cam_index
+    msg.streamName = name
+    #msg.mipMapBrightness = 180
     #print(type(msg))
     #print("Success!")
     return msg   
@@ -120,37 +137,38 @@ def main():
     ecal_core.initialize(sys.argv, "publish_multiple_cam_stream")
     ecal_core.set_process_state(1, 1, "Image Publisher Running")
 
-    cams = ["CamA"]
+    cams = ["CamA", "CamB", "CamC", "CamD"]
     publishers = []
     all_frames = []
-    # for cam in cams:
-    publisher = create_publisher(cams[0])
-    publishers.append(publisher)
-    frames = load_frames_npz(cam_name = cams[0])
-    all_frames.append(frames)
+    for cam in cams:
+        publisher = create_publisher(cam)
+        publishers.append(publisher)
+        frames = load_frames_npz(cam_name = cam)
+        all_frames.append(frames)
 
-    ended = [False] *4
     num_frames = all_frames[0].shape[0]
     print(num_frames)
 
     cam_index = 0
 
-    pub_index = 0
+    #pub_index = 0
     while ecal_core.ok():
         num_cams = len(cams)
         
         for i in range(num_frames):
-            # for cam_index in range(num_cams):
-            # cam_pub = publishers[cam_index]
-            cam_frames = all_frames[cam_index]
-            msg = build_image_message(cam_frames[i], i)
-            publisher.send(msg.to_bytes())
-            time.sleep(1/30)
-            if i == num_frames - 1:
-                # ended[cam_index] = True
-                break
+            for cam_index in range(num_cams):
+                cam_pub = publishers[cam_index]
+                cam_frames = all_frames[cam_index]
+                name = cams[cam_index]
+                msg = build_image_message(cam_frames[i], i, cam_index, name, encoding="bgr8")
+                cam_pub.send(msg.to_bytes())
+                #time.sleep(0.004)
+            time.sleep(1/10)
+            # if i == num_frames - 1:
+            #     # ended[cam_index] = True
+            #     break
         
-
+        print("Published all frames and exiting. You may Ctrl+C on the recording command now.")
             
         break    
         
