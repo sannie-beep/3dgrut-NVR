@@ -78,51 +78,44 @@ def view_matrix_from_rotation_translation(
 def build_extrinsic_mat_from_rotation_translation(
             rotation: List,
             translation: List,
-            offset: 'List[float]' = [0.0, 0.0, 0.0]
         ) -> np.ndarray:
         """
-        Constructs a 4×4 view matrix from rotation and translation, overriding zero-rotation for Cam 0 if needed,
-        and applying a global offset so all cameras shift together.
+        Constructs a 4×4 extrinsic matrix from rotation and translation.
+        Overrides camD's 0 rotation to identity matrix
         """
-        import numpy as np
-
         # Convert to arrays
-    
         R = np.array(rotation, dtype=float).reshape(3,3)   # shape (3,3)
         t = np.array(translation, dtype=float).reshape(3,1)  # shape (3,1)
         t = np.divide(t, 100.0) # to convert from cm to m
+
         # Override zero rotation to identity
         if np.allclose(R, 0):
             # This is likely Cam 0 with zero extrinsics; give it identity orientation
             R = np.eye(3, dtype=float)
             # Optionally: ensure t is zero so offset purely determines new center
             t = np.zeros((3,1), dtype=float)
-
-        # Apply global offset: shift camera center by `offset` in world space
-        offset_arr = np.array(offset, dtype=float).reshape(3,1)
-        # Assuming rotation/translation denote world-to-camera extrinsic:
-        #t = t - R @ offset_arr
-        
-
       
         # Build view matrix
         upper = np.hstack([R, t])               # shape (3,4)
         bottom = np.array([[0.0, 0.0, 0.0, 1.0]], dtype=upper.dtype)
-        view_matrix = np.vstack([upper, bottom])  # shape (4,4)
-        return view_matrix
+        extrinsic_matrix = np.vstack([upper, bottom])  # shape (4,4)
+        return extrinsic_matrix
 
-def six_dof_pose_to_4x4_world_t_body_mat (six_dof_pose: List[float]) -> np.ndarray:
+def six_dof_pose_to_view_mat (six_dof_pose: List[float]) -> np.ndarray:
     """
-    Converts a 6-DOF pose (x, y, z, roll, pitch, yaw) into a 4x4 world_T_body transformation matrix.
+    Converts a 6-DOF pose (x, y, z, roll, pitch, yaw) into a 4x4 view matrix.
     Euler angles MUST be in degree format
+
+    Args:
+        six_dof_pose (List[float]): the 6-DOF pose (x, y, z, roll, pitch, yaw) of the origin camera
     """
     # We can construct the rotation matrix using scipy's from euler
     rotation_matrix = R.from_euler('xyz', six_dof_pose[3:], degrees=True).as_matrix()
     translation_vector = np.array(six_dof_pose[:3], dtype=float).reshape(3, 1)  # shape (3,1)
     # Stack them
-    world_T_body = view_matrix_from_rotation_translation(rotation_matrix, translation_vector)
+    view_matrix = view_matrix_from_rotation_translation(rotation_matrix, translation_vector)
 
-    return world_T_body
+    return view_matrix
 
 
 class NovelViewRenderer:
@@ -162,7 +155,7 @@ class NovelViewRenderer:
     def set_trajectory_filepath(self):
         """Sets the trajectory filename."""
         if not self.trajectory_filename:
-            raise ValueError("Trajectory filename cannot be empty.")
+            self.trajectory_fullpath = self.trajectory_folder + "test_1.csv"
         self.trajectory_fullpath = self.trajectory_folder + self.trajectory_filename + ".csv"
 
     def is_loaded(self) -> bool:
@@ -228,10 +221,10 @@ class NovelViewRenderer:
             np.ndarray: The updated origin camera pose as a 4x4 view matrix.
         """
   
-        world_t_body = None
+        world_to_camd = None
         if new_pose is not None: 
         # Convert the new pose to a 4x4 world to body transformation matrix
-            world_t_body = six_dof_pose_to_4x4_world_t_body_mat(new_pose)
+            world_to_camd = six_dof_pose_to_4x4_world_t_body_mat(new_pose)
             self.v_device.move_rig_to_6dof(world_t_body)
     
     @ensure_loaded
@@ -415,19 +408,19 @@ class VilotaDevice:
 
         return distortions
 
-    def move_rig_to_6dof(self, world_T_body_pose: np.ndarray):
-        """
-        Moves camera rig to the specified pose in terms of a 4x4 matrix
-        """
-        for index, camera in self.cameras.items():
-            new_view_mat = []
-            cam_i_to_cam0 = self.extrinsics[index]
-            camera_to_world = world_T_body_pose @ np.array(cam_i_to_cam0) # apply the transformation and update
-            new_view_mat = np.linalg.inv(camera_to_world)  # Invert the matrix to get the view matrix
-            camera.update(torch.tensor(new_view_mat, dtype=torch.float64))  # Update the camera's view matrix
-            if index == self.get_origin_camera_index():
-                # If this is the origin camera, update the origin camera pose
-                self.origin_camera_pose = new_view_mat
+    # def move_rig_to_6dof(self, world_T_body_pose: np.ndarray):
+    #     """
+    #     Moves camera rig to the specified pose in terms of a 4x4 matrix
+    #     """
+    #     for index, camera in self.cameras.items():
+    #         new_view_mat = []
+    #         cam_i_to_cam0 = self.extrinsics[index]
+    #         camera_to_world = world_T_body_pose @ np.array(cam_i_to_cam0) # apply the transformation and update
+    #         new_view_mat = np.linalg.inv(camera_to_world)  # Invert the matrix to get the view matrix
+    #         camera.update(torch.tensor(new_view_mat, dtype=torch.float64))  # Update the camera's view matrix
+    #         if index == self.get_origin_camera_index():
+    #             # If this is the origin camera, update the origin camera pose
+    #             self.origin_camera_pose = new_view_mat
     
     def check_rig_layout(self, world_to_camd, world_to_cami, i):
     # world_to_camd : Get the world to cam of cam D
@@ -444,26 +437,52 @@ class VilotaDevice:
         print("Saved report to check_extrinsics.txt")
         #     # cam_a_to_camd : world_to_camd @ inv(world_to_cama) --> cam a extrinsic frm file ( verify this)
 
-    def move_rig_to_view(self, new_view_matrix: np.ndarray):
+    def move_rig_to_view(self, new_view_matrix: np.ndarray, view_cam_index: int):
         """
-        Moves the camera rig to a new view matrix.
+        Moves the origin camera to the new view matrix/ view from origin camera given the new matrix.
+        Updates all other cameras by their respective translations and rotations from the updated
+        orientation of the origin camera
+
         Args:
-            new_view_matrix (np.ndarray): The new view matrix to set for the cameras.
+            new_view_matrix (np.ndarray): The new view matrix to set
+            view_cam_index (int): Indicates which camera the view matrix is from
         """
+        # Check if new_view_matrix is from origin, if not get the origin view matrix relative to this
+        og_index = self.get_origin_camera_index() 
+        is_view_from_origin = view_cam_index == og_index
+        if not is_view_from_origin:
+            new_view_matrix = self.get_view_from_origin_cam(new_view_matrix, view_cam_index)
+        
+        # Update each camera to new calculated view
         for index, camera in self.cameras.items():
             world_to_cam0 = new_view_matrix
             cam0_to_world = np.linalg.inv(world_to_cam0)
             cam_i_to_cam0 = self.extrinsics[index]
             cami_to_world = cam0_to_world @ np.array(cam_i_to_cam0)
             world_to_cami = np.linalg.inv(cami_to_world)  # Invert to get the view matrix
-            print(f"Camera {index} view matrix: {camera.view_matrix}")
             camera.update(torch.tensor(world_to_cami, dtype=torch.float64)) 
-            #print(f"Camera {index} updated with new view matrix: {self.cameras[index].view_matrix}")
         
-        og_index = self.get_origin_camera_index()
-        self.cameras[og_index].update(torch.tensor(new_view_matrix, dtype=torch.float64))  # Update the origin camera's view matrix
         # Update the origin camera pose
+        self.cameras[og_index].update(torch.tensor(new_view_matrix, dtype=torch.float64))  # Update the origin camera's view matrix
         self.origin_camera_pose = new_view_matrix
+    
+
+    def get_view_from_origin_cam(self, world_to_cami: np.ndarray, cam_index : int) -> np.ndarray:
+        """
+        Helper function to calculate view matrix of origin camera given the
+        view matrix of another camera
+
+        Args:
+            world_to_cami (np.ndarray): View matrix to selected camera
+            cam_index (int): Index of selected camera in the rig
+
+        Returns:
+            world_to_camd (np.ndarray): View matrix to origin camera
+        """
+        cami_to_cam0 = self.extrinsics[cam_index]
+        world_to_camd = cami_to_cam0 @ world_to_cami
+
+        return world_to_camd
 
     def get_origin_camera_pose(self):
         return self.loader.get_origin_camera_info()[1]

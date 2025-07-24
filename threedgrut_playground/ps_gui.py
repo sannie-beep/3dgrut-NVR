@@ -626,7 +626,8 @@ class Playground:
             if getattr(self, "scene_center", None) is None:
                 # If no center is defined, select this by default
                 self.scene_center = [0.999029278755188, 0.00626010866835713, 0.043603427708149, 0.0137977302074432, 0.00638079596683383, -0.99997615814209, -0.00262921908870339, -0.265371531248093, 0.0435859337449074, 0.00290489150211215, -0.999045491218567, 2.19675970077515, 0.0, 0.0, 0.0, 1.0]
-                
+            
+
             if self.calibration_loaded and psim.Button("Save Scene Center"):
                 view_mat, sixdof_pose, view_mat_string = self.get_view_matrix_and_pose()
                 print(f"View matrix: {view_mat}")
@@ -659,7 +660,7 @@ class Playground:
             )
             self.novel_view_renderer.set_trajectory_filepath()
             trajectory_path = self.novel_view_renderer.trajectory_fullpath
-            psim.Text(f"Trajectory file will be loaded from:{trajectory_path}")
+            psim.Text(f"Trajectory file will be loaded from:\n{trajectory_path}")
 
 
             if self.calibration_loaded and psim.TreeNode("Load Trajectory"):
