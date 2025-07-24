@@ -639,7 +639,9 @@ class Playground:
             if self.calibration_loaded and psim.Button("Move to Scene center"):
                 if hasattr(self, "scene_center") and self.scene_center is not None:
                     # Move the camera to the saved scene center
-                    self.novel_view_renderer.move_rig_to_view(self.scene_center)
+                    index = self.selected_camera_idx
+                    self.novel_view_renderer.move_rig_to_pose(self.scene_center,cam_index= index, is_6dof=False)
+
                 cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
                 view_params = polyscope_from_kaolin_camera(cam)
                 eye = view_params.get_position()
@@ -687,7 +689,7 @@ class Playground:
                         changed_any = True
                 if psim.Button("Set 6dof pose"):
                     pose = self._move_pose_values.copy()
-                    self.novel_view_renderer.move_rig_to_6dof(pose)
+                    self.novel_view_renderer.move_rig_to_pose(pose)
                     cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
                     view_params = polyscope_from_kaolin_camera(cam)
                     eye = view_params.get_position()
@@ -1284,7 +1286,8 @@ class Playground:
             for i in range(len(poses_list)):
                 pose = poses_list[i]
                 if psim.Button(f"Move to Pose {i}"):
-                    self.novel_view_renderer.move_rig_to_6dof(pose)
+                    # All poses in file are from origin camera
+                    self.novel_view_renderer.move_rig_to_pose(pose)
                     cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
                     view_params = polyscope_from_kaolin_camera(cam)
                     eye = view_params.get_position()

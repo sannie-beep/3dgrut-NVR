@@ -206,35 +206,53 @@ class NovelViewRenderer:
         return self.v_device.get_camera_count()
     
     @ensure_loaded
-    def move_rig_to_6dof(
+    def move_rig_to_pose(
         self,
-        new_pose : List[float] = None,
+        new_pose: List[float],
+        cam_index: None,
+        is_6dof: True
     ):
-        """Moves the camera rig to a new position and orientation.
-        This updates the entire rig based on the provided translation and rotation and 
-        returns the updated origin camera pose as a 4x4 view matrix.
-        Args:
-            translation (List[float]): The translation vector [tx, ty, tz].
-            new_pose (List[float]): The new pose of the Vilota device, in the format [x, y, z, roll, pitch, yaw]
-            (euler angles in degrees).
-        Returns:
-            np.ndarray: The updated origin camera pose as a 4x4 view matrix.
         """
-  
-        world_to_camd = None
-        if new_pose is not None: 
-        # Convert the new pose to a 4x4 world to body transformation matrix
-            world_to_camd = six_dof_pose_to_4x4_world_t_body_mat(new_pose)
-            self.v_device.move_rig_to_6dof(world_t_body)
+        Moves the origin camera to pose specified, and updates all cameras accordingly.
+        If cam_index is not specified, pose is assumed to be that of origin camera (Cam D)
+        If is_6dof is not specified, pose is assumed to be a 4x4 view matrix
+
+        Args:
+            new_pose (List[float]): The new pose in question. It can be:
+                                    - 6DOF pose: [x, y, z, roll, pitch, yaw]
+                                    - View matrix: List of length 16 (flattened)
+            cam_index (Optional[int]): Index of camera where pose is taken from. Defaults to None
+                                        (Origin camera index is taken when it is not specified)
+            is_6
+        """
+
+        # If no cam_index is specified, assume the pose is for the origin camera.
+        if not cam_index:
+            cam_index = self.get_origin_camera_index()
+
+        #If is_6dof is not specified, pose is assumed to be a 4x4 view matrix
+        if is_6dof or len(new_pose) == 6:
+            view_matrix = six_dof_pose_to_view_mat(new_pose)
+            self._move_rig_to_pose(new_view_matrix = view_matrix, cam_index = cam_index, is_reshaped = True)
+
+        else: self.__move_rig_to_pose(new_pose, cam_index)
+
     
     @ensure_loaded
-    def move_rig_to_view(
+    def __move_rig_to_pose(
         self,
-        new_view_matrix = List[float]
+        new_view_matrix = List[float],
+        cam_index = int,
+        is_reshaped = False
     ):
-        if new_view_matrix:
+        """
+        Private method to move rig to new view matrix
+        """
+        # If it's not reshaped (given raw len 16 array), we reshape it
+        if not is_reshaped:
             new_view_matrix = np.array(new_view_matrix, dtype=float).reshape(4, 4)
-            self.v_device.move_rig_to_view(new_view_matrix)
+        
+        self.v_device.move_rig_to_view(new_view_matrix, cam_index)
 
     @ensure_loaded
     def check_rig_layout(
@@ -407,20 +425,6 @@ class VilotaDevice:
                 print(f"Camera {camera} does not have distortion coefficients.")
 
         return distortions
-
-    # def move_rig_to_6dof(self, world_T_body_pose: np.ndarray):
-    #     """
-    #     Moves camera rig to the specified pose in terms of a 4x4 matrix
-    #     """
-    #     for index, camera in self.cameras.items():
-    #         new_view_mat = []
-    #         cam_i_to_cam0 = self.extrinsics[index]
-    #         camera_to_world = world_T_body_pose @ np.array(cam_i_to_cam0) # apply the transformation and update
-    #         new_view_mat = np.linalg.inv(camera_to_world)  # Invert the matrix to get the view matrix
-    #         camera.update(torch.tensor(new_view_mat, dtype=torch.float64))  # Update the camera's view matrix
-    #         if index == self.get_origin_camera_index():
-    #             # If this is the origin camera, update the origin camera pose
-    #             self.origin_camera_pose = new_view_mat
     
     def check_rig_layout(self, world_to_camd, world_to_cami, i):
     # world_to_camd : Get the world to cam of cam D
@@ -451,7 +455,7 @@ class VilotaDevice:
         og_index = self.get_origin_camera_index() 
         is_view_from_origin = view_cam_index == og_index
         if not is_view_from_origin:
-            new_view_matrix = self.get_view_from_origin_cam(new_view_matrix, view_cam_index)
+            new_view_matrix = self._get_view_from_origin_cam(new_view_matrix, view_cam_index)
         
         # Update each camera to new calculated view
         for index, camera in self.cameras.items():
@@ -467,7 +471,7 @@ class VilotaDevice:
         self.origin_camera_pose = new_view_matrix
     
 
-    def get_view_from_origin_cam(self, world_to_cami: np.ndarray, cam_index : int) -> np.ndarray:
+    def _get_view_from_origin_cam(self, world_to_cami: np.ndarray, cam_index : int) -> np.ndarray:
         """
         Helper function to calculate view matrix of origin camera given the
         view matrix of another camera
