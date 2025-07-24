@@ -114,7 +114,7 @@ def six_dof_pose_to_view_mat (six_dof_pose: List[float]) -> np.ndarray:
     translation_vector = np.array(six_dof_pose[:3], dtype=float).reshape(3, 1)  # shape (3,1)
     # Stack them
     view_matrix = view_matrix_from_rotation_translation(rotation_matrix, translation_vector)
-
+    view_matrix = np.linalg.inv(view_matrix)  # Invert to get world to body transformation
     return view_matrix
 
 
@@ -135,7 +135,7 @@ class NovelViewRenderer:
         # - movement to a defined point: VilotaDevice.move_rig_to()
         self.v_device = None
         self.trajectory_filename = "test_1"  # Default trajectory filename
-        self.trajectory_folder = "./calibration_files/trajectories/"  # Default trajectory folder
+        self.trajectory_folder = "./video_trajectories/"  # Default trajectory folder
         self.trajectory_parser = None
         self.trajectory_fullpath = "./calibration_files/trajectories/test_1.csv"
         self.world_to_camd =[]
@@ -209,8 +209,8 @@ class NovelViewRenderer:
     def move_rig_to_pose(
         self,
         new_pose: List[float],
-        cam_index: None,
-        is_6dof: True
+        cam_index= None,
+        is_6dof= True
     ):
         """
         Moves the origin camera to pose specified, and updates all cameras accordingly.
@@ -233,7 +233,7 @@ class NovelViewRenderer:
         #If is_6dof is not specified, pose is assumed to be a 4x4 view matrix
         if is_6dof or len(new_pose) == 6:
             view_matrix = six_dof_pose_to_view_mat(new_pose)
-            self._move_rig_to_pose(new_view_matrix = view_matrix, cam_index = cam_index, is_reshaped = True)
+            self.__move_rig_to_pose(new_view_matrix = view_matrix, cam_index = cam_index, is_reshaped = True)
 
         else: self.__move_rig_to_pose(new_pose, cam_index)
 
@@ -241,8 +241,8 @@ class NovelViewRenderer:
     @ensure_loaded
     def __move_rig_to_pose(
         self,
-        new_view_matrix = List[float],
-        cam_index = int,
+        new_view_matrix : List[float],
+        cam_index : int,
         is_reshaped = False
     ):
         """
@@ -274,8 +274,8 @@ class NovelViewRenderer:
     def get_origin_view_matrix(self, cam_index:int, new_pose:np.ndarray) -> np.ndarray:
         return self.v_device.get_view_from_origin_cam(new_pose, cam_index)
 
-    @ensure_loaded
-    def convert_view_matrix_to_6dof_pose(self, new_pose = None):
+    
+    def convert_view_matrix_to_6dof_pose(self, new_pose = None) -> List[float]:
         """
         Converts the scene center to a 6-DOF pose.
         Takes this NVR's scene center view matrix and converts it into a 6DOF pose.
@@ -286,7 +286,7 @@ class NovelViewRenderer:
         """
         if self.center_view_matrix is None and new_pose is None:
             raise Error("center_view_matrix is not set. Please set it before converting to 6DOF pose.")
-        if new_pose:
+        if new_pose is not None:
             world_to_body = new_pose
         else: world_to_body = self.center_view_matrix
         world_to_body = np.array(world_to_body, dtype=float).reshape(4, 4)
@@ -311,15 +311,30 @@ class NovelViewRenderer:
             self.trajectory_parser.parse()
             if self.trajectory_parser.poses not in self.trajectory:
                 self.trajectory = self.trajectory_parser.poses
+        self.trajectory = self.trajectory_parser.poses
         return self.trajectory_parser.poses
     
     @ensure_loaded
     def add_pose_to_trajectory(self, pose:np.ndarray, cam_index:int):
+        print(f"Pose before {pose} to trajectory.")
         if cam_index != self.get_origin_camera_index():
-            pose = self.v_device.get_view_from_origin_cam()
-        self.trajectory.append(pose)
-        self.trajectory_parser.append_pose_to_file(pose)
-        return pose
+            pose = self.v_device.get_view_from_origin_cam(pose, cam_index)
+        pose = self.convert_view_matrix_to_6dof_pose(pose)
+        self.trajectory = self.trajectory_parser.append_pose_to_file(pose)
+        print(f"Added pose {pose} to trajectory.")
+        return self.trajectory
+    
+    @ensure_loaded
+    def create_new_trajectory(self):
+        """
+        Creates a new trajectory file with the given name.
+        """
+        self.set_trajectory_filepath()
+        if not self.trajectory_parser:
+            self.trajectory_parser = TrajectoryPathParser(self.trajectory_fullpath)
+        self.trajectory = self.trajectory_parser.create_new_trajectory_file(self.trajectory_fullpath)
+        return self.trajectory
+    
     
     @ensure_loaded
     def get_cam_distortions(self) -> List[float]:
@@ -470,6 +485,7 @@ class VilotaDevice:
         is_view_from_origin = view_cam_index == og_index
         if not is_view_from_origin:
             new_view_matrix = self.get_view_from_origin_cam(new_view_matrix, view_cam_index)
+            print("Calculated new frm og")
         
         # Update each camera to new calculated view
         for index, camera in self.cameras.items():
@@ -629,18 +645,17 @@ class Loader:
         rotation_matrix = camera_params['ext_rotation']
         translation_vector = camera_params['ext_translation']
 
-        # Sometimes the origin camera has an empty rotation matrix
-        offset = [1.0, 2.0, 3.0] # define an offset so the translation isn't invalid
+        
 
         print(f"Rotation matrix: ", rotation_matrix)
         if rotation_matrix is None or len(rotation_matrix) == 0:
             rotation_matrix = [[0.0,0.0,0.0],[0.0,0.0,0.0],[0.0,0.0,0.0]]
-            self.origin_camera_pose = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector, offset)
+            self.origin_camera_pose = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector)
             self.origin_camera = cam_rig_index
             print(f"Set origin camera pose for camera {cam_rig_index} with zero rotation matrix.")
 
         elif rotation_matrix[0][0] == 0.0 and rotation_matrix[1][1] == 0.0 and rotation_matrix[2][2] == 0.0:
-            self.origin_camera_pose = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector, offset)
+            self.origin_camera_pose = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector)
             self.origin_camera = cam_rig_index
             print(f"Set origin camera pose for camera {cam_rig_index} with zero rotation matrix.")
          
@@ -705,7 +720,7 @@ class TrajectoryPathParser:
     """ Parses a trajectory path file and returns a list of 6-DOF poses. """
     
     def __init__(self, path: str):
-        self.trajectory_file = path if path else ".video_trajectories/test_1.csv"
+        self.trajectory_file = path if path else "./video_trajectories/test_1.csv"
         self.poses = []
     
     def parse(self) -> List[List[float]]:
@@ -719,12 +734,40 @@ class TrajectoryPathParser:
         #save the poses as floats
         data = data[1:]  # Skip the header row
         data = [[float(x) for x in row] for row in data if len(row) == 6]  # Ensure each row has exactly 6 elements
-        if data is None or len(data) == 0:
+        if data is None:
             raise Error("Trajectory CSV has no entries.")
         self.poses = data
         return data
     
-    def append_pose_to_file(self)
+    def create_new_trajectory_file(self, filepath: str = None):
+        """
+        Creates a new trajectory file with the specified filepath.
+        If no filepath is provided, uses the default trajectory file path.
+        """
+        if filepath:
+            self.trajectory_file = filepath
+        if not self.trajectory_file.endswith('.csv'):
+            self.trajectory_file += '.csv'
+        
+        # Create the file and write the header
+        with open(self.trajectory_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['x', 'y', 'z', 'roll', 'pitch', 'yaw'])
+
+        poses = self.parse()
+        return poses
+        #print(f"Created new trajectory file: {self.trajectory_file}")
+    
+    def append_pose_to_file(self, pose):
+        """
+        Appends a new pose to the trajectory file.
+        """  
+        with open(self.trajectory_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(pose)  # Write the pose as a new row
+        poses = self.parse()
+        return poses
+        #print(f"Appended {len(self.poses)} poses to {self.trajectory_file}.")
 
 ############# TEST FUNCTIONS ######################
 

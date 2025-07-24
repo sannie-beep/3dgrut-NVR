@@ -49,9 +49,9 @@ class Playground:
         self.primitives = self.engine.primitives
         self.video_recorder = self.engine.video_recorder
         self.novel_view_renderer = self.engine.novel_view_renderer
-        self.trajectory_poses = None
         self.video_h = 800
         self.video_w = 1280
+        self.selected_pose_idx = 0
        
 
         """ When this flag is toggled on, the state of the canvas have changed and it needs to be re-rendered """
@@ -418,8 +418,11 @@ class Playground:
             camera_pos = camera.get_position()
             camera_rot = camera.get_R()
             psim.PushItemWidth(100)
-            psim.Text(f"Position: [{camera_pos[0]:.2f}, {camera_pos[1]:.2f}, {camera_pos[2]:.2f}]")
-            psim.Text(f"Rotation: {camera_rot}")
+            # psim.Text(f"Position: [{camera_pos[0]:.2f}, {camera_pos[1]:.2f}, {camera_pos[2]:.2f}]")
+            # psim.Text(f"Rotation: {camera_rot}")
+            curr_view_mat = camera.get_view_mat()
+            curr_six6of = self.novel_view_renderer.convert_view_matrix_to_6dof_pose(curr_view_mat)
+            psim.Text(f"6DOF:{str(curr_six6of)}")
          
 
             psim.PopItemWidth()
@@ -594,6 +597,10 @@ class Playground:
                 self.selected_camera_idx = 0    
             if getattr(self, "trajectory_loaded", None) is None:
                  self.trajectory_loaded = False
+            
+            if getattr(self, "poses", None) is None:
+                # Initialize poses_list if it doesn't exist
+                self.poses = []
 
             # If calibration is loaded, show all controls
             if self.calibration_loaded:
@@ -617,22 +624,34 @@ class Playground:
                         "Trajectory filename (in ./video_trajectories)",
                         self.novel_view_renderer.trajectory_filename
                     )
-                    try:
-                        self.novel_view_renderer.set_trajectory_filepath()
-                        self.trajectory_poses = self.novel_view_renderer.get_trajectory_poses()
-                        self.trajectory_loaded = True  # Set the flag to indicate that the trajectory is loaded
-                    except FileNotFoundError as e:
-                        self._trajectory_status = f"Trajectory file not found. \nPlease make sure that file exists."
-                    except ValueError as e:
-                        self._trajectory_status = f"{e}"
-                    except Exception as e:
-                        self._trajectory_status = f"{e}"
+                    if not self.trajectory_loaded and psim.Button("Load Trajectory"):
+                        try:
+                            self.novel_view_renderer.set_trajectory_filepath()
+                            self.poses = self.novel_view_renderer.get_trajectory_poses()
+                            self.trajectory_loaded = True  # Set the flag to indicate that the trajectory is loaded
+                        except FileNotFoundError as e:
+                            self._trajectory_status = f"Trajectory file not found. \nPlease make sure that file exists."
+                        except ValueError as e:
+                            self._trajectory_status = f"{e}"
+                        except Exception as e:
+                            self._trajectory_status = f"{e}"
+                    psim.SameLine()
+                    if psim.Button("Create New Trajectory"):
+                        self.poses = self.novel_view_renderer.create_new_trajectory()
+                        self._trajectory_status = "Created a new trajectory. Add poses to it."
+                        self.trajectory_loaded = True
                     
-                    if psim.Button("Add current view to trajectory"):
-                        current_cam_view = ps.get_camera_view_matrix()
-                        curr_cam_index = self.selected_camera_idx
-                        origin_pose = self.novel_view_renderer.get_origin_view_matrix(current_cam_view, curr_cam_index)
-                        
+                    if self.trajectory_loaded:
+                        if psim.Button("Add current view to trajectory"):
+                            current_cam_params = ps.get_view_camera_parameters()
+                            current_cam_view_mat = current_cam_params.get_view_mat()
+                            curr_cam_index = self.selected_camera_idx
+                            self.poses = self.novel_view_renderer.add_pose_to_trajectory(current_cam_view_mat, curr_cam_index)
+                        if psim.TreeNode(f"Trajectory: {len(self.poses)} poses"):
+                            poses_list = self.novel_view_renderer.get_trajectory_poses()
+                            self.poses = poses_list
+                            if self.trajectory_loaded:
+                                self._draw_cam_trajectory_view(self.poses)
 
             
             # if self.calibration_loaded:
@@ -737,28 +756,28 @@ class Playground:
             psim.PopItemWidth()
             psim.TreePop()
 
-    def save_pose_to_csv(self, view_mat, sixdof_pose, view_mat_string, csv_filename="new_scene_center.csv"):
-        csv_path = "./trajectories/" + csv_filename
-        # Ensure sixdof_pose is a flat list or tuple of 6 values
-        if sixdof_pose is not None and len(sixdof_pose) == 6:
-            file_exists = os.path.isfile(csv_path)
-            with open(csv_path, "a", newline='') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(["x", "y", "z", "roll", "pitch", "yaw"])
-                writer.writerow(sixdof_pose)
-        psim.Text(f"6DOF pose: {sixdof_pose}")
+    # def save_pose_to_csv(self, view_mat, sixdof_pose, view_mat_string, csv_filename="new_scene_center.csv"):
+    #     csv_path = "./trajectories/" + csv_filename
+    #     # Ensure sixdof_pose is a flat list or tuple of 6 values
+    #     if sixdof_pose is not None and len(sixdof_pose) == 6:
+    #         file_exists = os.path.isfile(csv_path)
+    #         with open(csv_path, "a", newline='') as f:
+    #             writer = csv.writer(f)
+    #             if not file_exists:
+    #                 writer.writerow(["x", "y", "z", "roll", "pitch", "yaw"])
+    #             writer.writerow(sixdof_pose)
+    #     psim.Text(f"6DOF pose: {sixdof_pose}")
 
-    def get_view_matrix_and_pose(self):
-        params_string = ps.get_view_as_json()
-        params_json = json.loads(params_string)
-                # Grab the view matrix
-        view_mat = params_json.get("viewMat", None)
-        self.scene_center = view_mat if view_mat is not None else self.scene_center
-        self.novel_view_renderer.center_view_matrix = self.scene_center
-        sixdof_pose = self.novel_view_renderer.convert_scene_center_to_6dof_pose()
-        view_mat_string = str(view_mat) if view_mat is not None else None
-        return view_mat,sixdof_pose,view_mat_string
+    # def get_view_matrix_and_pose(self):
+    #     params_string = ps.get_view_as_json()
+    #     params_json = json.loads(params_string)
+    #             # Grab the view matrix
+    #     view_mat = params_json.get("viewMat", None)
+    #     self.scene_center = view_mat if view_mat is not None else self.scene_center
+    #     self.novel_view_renderer.center_view_matrix = self.scene_center
+    #     sixdof_pose = self.novel_view_renderer.convert_scene_center_to_6dof_pose()
+    #     view_mat_string = str(view_mat) if view_mat is not None else None
+    #     return view_mat,sixdof_pose,view_mat_string
 
 
 
@@ -1318,12 +1337,14 @@ class Playground:
         psim.Text(f"(Selected), {xi_alpha}")
         psim.PopItemWidth()
     
+    
     def _draw_cam_trajectory_view(self, poses_list):
         if poses_list is not None:
             for i in range(len(poses_list)):
                 pose = poses_list[i]
                 if psim.Button(f"Move to Pose {i}"):
                     # All poses in file are from origin camera
+                    self.selected_pose_idx = i
                     self.novel_view_renderer.move_rig_to_pose(pose)
                     cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
                     view_params = polyscope_from_kaolin_camera(cam)
@@ -1331,6 +1352,14 @@ class Playground:
                     target = view_params.get_position() + view_params.get_look_dir()
                     up = view_params.get_up_dir()
                     ps.look_at_dir(eye, target, up, fly_to=True)
+                
+                psim.SameLine()
+                # if self.selected_pose_idx == i and psim.Button(f"Add to output trajectory"):
+                #     camera = polyscope_to_kaolin_camera(
+                #         ps.get_view_camera_parameters(), width=self.video_w, height=self.video_h
+                #     )
+                #     self.video_recorder.trajectory.append(camera)
+                
 
     
 
