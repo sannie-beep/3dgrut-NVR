@@ -269,9 +269,13 @@ class NovelViewRenderer:
             raise Error("world_to_camd is not set. Please set it before checking the rig layout.")
         
         self.v_device.check_rig_layout(self.world_to_camd, self.world_to_cami, self.i)
+    
+    @ensure_loaded
+    def get_origin_view_matrix(self, cam_index:int, new_pose:np.ndarray) -> np.ndarray:
+        return self.v_device.get_view_from_origin_cam(new_pose, cam_index)
 
     @ensure_loaded
-    def convert_scene_center_to_6dof_pose(self):
+    def convert_view_matrix_to_6dof_pose(self, new_pose = None):
         """
         Converts the scene center to a 6-DOF pose.
         Takes this NVR's scene center view matrix and converts it into a 6DOF pose.
@@ -280,9 +284,11 @@ class NovelViewRenderer:
         Returns:
             List[float]: The 6-DOF pose in the format [tx, ty, tz, roll, pitch, yaw].
         """
-        if self.center_view_matrix is None:
+        if self.center_view_matrix is None and new_pose is None:
             raise Error("center_view_matrix is not set. Please set it before converting to 6DOF pose.")
-        world_to_body = self.center_view_matrix
+        if new_pose:
+            world_to_body = new_pose
+        else: world_to_body = self.center_view_matrix
         world_to_body = np.array(world_to_body, dtype=float).reshape(4, 4)
         body_to_world = np.linalg.inv(world_to_body)  # Invert the view matrix to get body to world
         r1 = body_to_world[0, :3]  # First row (x-axis)
@@ -307,7 +313,14 @@ class NovelViewRenderer:
                 self.trajectory = self.trajectory_parser.poses
         return self.trajectory_parser.poses
     
-
+    @ensure_loaded
+    def add_pose_to_trajectory(self, pose:np.ndarray, cam_index:int):
+        if cam_index != self.get_origin_camera_index():
+            pose = self.v_device.get_view_from_origin_cam()
+        self.trajectory.append(pose)
+        self.trajectory_parser.append_pose_to_file(pose)
+        return pose
+    
     @ensure_loaded
     def get_cam_distortions(self) -> List[float]:
         """Returns a list of distortion coefficients for all cameras."""
@@ -452,10 +465,11 @@ class VilotaDevice:
             view_cam_index (int): Indicates which camera the view matrix is from
         """
         # Check if new_view_matrix is from origin, if not get the origin view matrix relative to this
+        
         og_index = self.get_origin_camera_index() 
         is_view_from_origin = view_cam_index == og_index
         if not is_view_from_origin:
-            new_view_matrix = self._get_view_from_origin_cam(new_view_matrix, view_cam_index)
+            new_view_matrix = self.get_view_from_origin_cam(new_view_matrix, view_cam_index)
         
         # Update each camera to new calculated view
         for index, camera in self.cameras.items():
@@ -471,7 +485,7 @@ class VilotaDevice:
         self.origin_camera_pose = new_view_matrix
     
 
-    def _get_view_from_origin_cam(self, world_to_cami: np.ndarray, cam_index : int) -> np.ndarray:
+    def get_view_from_origin_cam(self, world_to_cami: np.ndarray, cam_index : int) -> np.ndarray:
         """
         Helper function to calculate view matrix of origin camera given the
         view matrix of another camera
@@ -691,7 +705,7 @@ class TrajectoryPathParser:
     """ Parses a trajectory path file and returns a list of 6-DOF poses. """
     
     def __init__(self, path: str):
-        self.trajectory_file = path if path else "./calibration_files/trajectories/test_2.csv"
+        self.trajectory_file = path if path else ".video_trajectories/test_1.csv"
         self.poses = []
     
     def parse(self) -> List[List[float]]:
@@ -705,10 +719,12 @@ class TrajectoryPathParser:
         #save the poses as floats
         data = data[1:]  # Skip the header row
         data = [[float(x) for x in row] for row in data if len(row) == 6]  # Ensure each row has exactly 6 elements
-        print(data)
+        if data is None or len(data) == 0:
+            raise Error("Trajectory CSV has no entries.")
         self.poses = data
         return data
-
+    
+    def append_pose_to_file(self)
 
 ############# TEST FUNCTIONS ######################
 
