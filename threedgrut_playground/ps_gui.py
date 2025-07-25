@@ -434,17 +434,10 @@ class Playground:
             _, self.video_recorder.trajectory_output_path = psim.InputText("Video Output Path",
                                                                            self.video_recorder.trajectory_output_path)
             if (psim.Button("Add Camera")):
-                fx, fy, cx, cy = self.novel_view_renderer.get_camera_intrinsics_at_index(self.selected_camera_idx)
-                cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
-                cam_w, cam_h = cam.width, cam.height
-                print(f"[{fx, fy, cx, cy}]")
-                camera = polyscope_to_kaolin_camera(
-                    ps.get_view_camera_parameters(), width=cam_w, height=cam_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
-                    fx = fx, fy = fy, cx = cx, cy = cy
-                )
-                camera.set_cam_intr(fx, fy, cx, cy)
-                self.video_recorder.add_camera(camera)
-                view_mat, sixdof_pose, view_mat_string = self.get_view_matrix_and_pose()
+                if self.selected_camera_idx is None:
+                    ps.warning("Please select a camera first.")
+                else:self.add_cam_to_vid_recorder(self.selected_camera_idx)
+                #view_mat, sixdof_pose, view_mat_string = self.get_view_matrix_and_pose()
                 #self.save_pose_to_csv(view_mat, sixdof_pose, view_mat_string, csv_filename="video_trajectory.csv")
                 
             psim.SameLine()
@@ -521,6 +514,20 @@ class Playground:
 
             psim.PopItemWidth()
             psim.TreePop()
+
+    def add_cam_to_vid_recorder(self, index):
+        fx, fy, cx, cy = self.novel_view_renderer.get_camera_intrinsics_at_index(index)
+        cam = self.novel_view_renderer.get_camera_at_index(index)
+        cam_w, cam_h = cam.width, cam.height
+        print(f"[{fx, fy, cx, cy}]")
+        ps_cam_params = polyscope_from_kaolin_camera(cam)
+        camera = polyscope_to_kaolin_camera(
+                    ps_cam_params, width=cam_w, height=cam_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
+                    fx = fx, fy = fy, cx = cx, cy = cy
+                )
+        camera.set_cam_intr(fx, fy, cx, cy)
+        self.video_recorder.add_camera(camera)
+
     
     def _draw_novel_view_from_calib_controls(self):
         """ Draws a widget to render novel views from a camera calibration file. User can fly to different camera views in
@@ -601,6 +608,10 @@ class Playground:
             if getattr(self, "poses", None) is None:
                 # Initialize poses_list if it doesn't exist
                 self.poses = []
+            
+            if getattr(self, "export_cam_idx", None) is None:
+                # Initialize export_cam_index if it doesn't exist
+                self.export_cam_index = 0
 
             # If calibration is loaded, show all controls
             if self.calibration_loaded:
@@ -648,10 +659,19 @@ class Playground:
                             curr_cam_index = self.selected_camera_idx
                             self.poses = self.novel_view_renderer.add_pose_to_trajectory(current_cam_view_mat, curr_cam_index)
                         if psim.TreeNode(f"Trajectory: {len(self.poses)} poses"):
+                            _, self.export_cam_index = psim.SliderInt(
+                                "Export Trajectory of Cam at index", self.export_cam_index, v_min=0, v_max=self.novel_view_renderer.get_camera_count() - 1
+                            )
+                            psim.SameLine()
+                            if psim.Button("Export Trajectory"):
+                                self.populate_vid_trajectory(self.poses, self.export_cam_index)
+                            psim.NewLine()
+                            psim.Text(f"Cam {self.export_cam_index} to render.")
                             poses_list = self.novel_view_renderer.get_trajectory_poses()
                             self.poses = poses_list
-                            if self.trajectory_loaded:
-                                self._draw_cam_trajectory_view(self.poses)
+                            self._draw_cam_trajectory_view(self.poses)
+
+                    psim.TreePop()
 
             
             # if self.calibration_loaded:
@@ -755,6 +775,17 @@ class Playground:
 
             psim.PopItemWidth()
             psim.TreePop()
+    
+    def populate_vid_trajectory(self, poses_list, idx=None):
+        """ Populates the video recorder trajectory with poses from the provided list. """
+        self.video_recorder.trajectory = []
+        if idx is None:
+            idx = self.selected_camera_idx
+        for pose in poses_list:
+            self.novel_view_renderer.move_rig_to_pose(pose, cam_index=idx, is_6dof=True)
+            self.add_cam_to_vid_recorder(idx)
+            
+
 
     # def save_pose_to_csv(self, view_mat, sixdof_pose, view_mat_string, csv_filename="new_scene_center.csv"):
     #     csv_path = "./trajectories/" + csv_filename
@@ -1353,7 +1384,7 @@ class Playground:
                     up = view_params.get_up_dir()
                     ps.look_at_dir(eye, target, up, fly_to=True)
                 
-                psim.SameLine()
+                
                 # if self.selected_pose_idx == i and psim.Button(f"Add to output trajectory"):
                 #     camera = polyscope_to_kaolin_camera(
                 #         ps.get_view_camera_parameters(), width=self.video_w, height=self.video_h

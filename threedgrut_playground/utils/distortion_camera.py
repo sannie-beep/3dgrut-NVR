@@ -104,6 +104,13 @@ class DistortionCamera(Camera):
             raise ValueError("Intrinsic parameters are not set.")
         return self.intrinsic_params 
     
+    def get_view_matrix(self) -> torch.Tensor:
+        """
+        Returns the view matrix of the camera.
+        Returns:
+            torch.Tensor: The view matrix of the camera.
+        """
+        return self.extrinsics.view_matrix()
     
 
        
