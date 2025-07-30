@@ -111,7 +111,6 @@ def generate_fisheye_rays(
 
     # Generate ray origins in world coordinates
     cam_center = camera.cam_pos()
-    print(f"Camera center: {cam_center}")
     rays_ori = (torch.tensor(cam_center, device=camera.device, dtype=torch.float32)
                 .reshape(1, 1, 1, 3)
                 .expand(1, camera.height, camera.width, 3))
@@ -160,10 +159,8 @@ def generate_fisheye_rays_double_sphere(
     pixel_y = pixel_y.to(camera.device, camera.dtype)
 
     fx, fy, cx, cy, xi, alpha = distortion_params[5:11]
-    print(f"BEF fx = {fx}, fy = {fy}, cx = {cx}, cy = {cy}")
     #fx, fy, cx, cy = camera.get_camera_intrinsics()
     #fx, fy = 614.8464965820313, 613.5963134765625
-    #print(f"AFT fx = {fx}, fy = {fy}, cx = {cx}, cy = {cy}")
 
     # Compute normalized image coordinates (m_x, m_y)
     m_x = (pixel_x - cx) / fx
@@ -281,7 +278,6 @@ def estimate_theta_star(
     theta_vals = torch.linspace(0.0, math.pi, steps=num_steps, device=device, dtype=dtype)
     d = lambda theta: theta + k1 * theta**2 + k2 * theta**5 + k3 * theta**7 + k4 * theta**9
     R = d(theta_vals)  # (num_steps,)
-    print(R.shape, theta_vals.shape, ru.shape)
 
     # ru: (...), need to find theta_star for each ru
     # Use torch.searchsorted (PyTorch >= 1.6)
@@ -319,7 +315,6 @@ def generate_rays_kb4(
     """
     assert len(camera) == 1, "generate_rays_kb4() supports only camera input of batch size 1"
     if coords_grid is None:
-        print(camera.width, camera.height, camera.device)
         coords_grid = generate_centered_pixel_coords(camera.width, camera.height, device=camera.device)
     else:
         assert camera.device == coords_grid[0].device, \
@@ -337,7 +332,6 @@ def generate_rays_kb4(
     fx, fy, cx, cy = camera.get_camera_intrinsics()
     #fx, fy, cx, cy = camera.get_camera_intrinsics()
     # import sys
-    print(f"KB4 COEFFS: {fx, fy, cx, cy, k1, k2, k3, k4}")
     # fx, fy, cx, cy, k1, k2, k3, k4 = [614.8464965820313, 613.5963134765625, 939.4267578125, 585.2528076171875, -3.0282579245977104e-05,
     #                 0.0002524006995372474,
     #                 0.0007139311637729406,
@@ -350,7 +344,6 @@ def generate_rays_kb4(
     pixel_x = pixel_x - cx
     pixel_y = pixel_y - cy
 
-    print(f"Focal lengths: fx={fx}, fy={fy} \n X0: {cx}, Y0: {cy}")
 
     m_x = (pixel_x) / fx 
     m_y = (pixel_y) / fy

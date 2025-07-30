@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import sys
 from typing import List
 import numpy as np
 from threedgrut_playground.utils.distortion_camera import DistortionCamera
@@ -32,8 +33,11 @@ from threedgrut_playground.utils.video_out import VideoRecorder
 from threedgrut_playground.utils.novel_view_renderer import NovelViewRenderer
 from threedgrut_playground.utils.kaolin_future.conversions import polyscope_from_kaolin_camera, polyscope_to_kaolin_camera
 from threedgrut_playground.engine import Engine3DGRUT, OptixPrimitiveTypes
+from threedgrut_playground.utils.mcap_convertor import McapConverter
 import csv
-
+from mcap.writer import Writer
+import tqdm
+from tqdm import trange
 
 #################################
 ##    --- Polyscope Gui ---    ##
@@ -49,6 +53,7 @@ class Playground:
         self.primitives = self.engine.primitives
         self.video_recorder = self.engine.video_recorder
         self.novel_view_renderer = self.engine.novel_view_renderer
+        self.mcap_convertor = McapConverter()
         self.video_h = 800
         self.video_w = 1280
         self.selected_pose_idx = 0
@@ -519,7 +524,6 @@ class Playground:
         fx, fy, cx, cy = self.novel_view_renderer.get_camera_intrinsics_at_index(index)
         cam = self.novel_view_renderer.get_camera_at_index(index)
         cam_w, cam_h = cam.width, cam.height
-        print(f"[{fx, fy, cx, cy}]")
         ps_cam_params = polyscope_from_kaolin_camera(cam)
         camera = polyscope_to_kaolin_camera(
                     ps_cam_params, width=cam_w, height=cam_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
@@ -564,7 +568,6 @@ class Playground:
                     self.calibration_loaded = True  # Set the flag to indicate that calibration is loaded
                     self._novel_view_calib_status = f"Loaded {self.novel_view_renderer.get_camera_count()} cameras from {calibration_path}"
                     self.distortions = self.novel_view_renderer.get_cam_distortions()
-                    print(f"Distortions: {self.distortions}")
                 except FileNotFoundError as e:
                     self._novel_view_calib_status = f"Calibration file not found. \nPlease make sure that file exists."
                     import traceback; traceback.print_exc()
@@ -586,7 +589,6 @@ class Playground:
                         self.novel_view_renderer.load_device(reload=True)
                         self._novel_view_calib_status = f"Reloaded {self.novel_view_renderer.get_camera_count()} cameras from {calibration_path}"
                         self.distortions = self.novel_view_renderer.get_cam_distortions()
-                        print(f"Distortions: {self.distortions}")
                         self.calibration_loaded = True  # Set the flag to indicate that the device is loaded
                     except FileNotFoundError as e:
                         self._novel_view_calib_status = f"Calibration file not found. \nPlease make sure that file exists."
@@ -609,7 +611,7 @@ class Playground:
                 # Initialize poses_list if it doesn't exist
                 self.poses = []
             
-            if getattr(self, "export_cam_idx", None) is None:
+            if getattr(self, "export_cam_index", None) is None:
                 # Initialize export_cam_index if it doesn't exist
                 self.export_cam_index = 0
 
@@ -660,11 +662,18 @@ class Playground:
                             self.poses = self.novel_view_renderer.add_pose_to_trajectory(current_cam_view_mat, curr_cam_index)
                         if psim.TreeNode(f"Trajectory: {len(self.poses)} poses"):
                             _, self.export_cam_index = psim.SliderInt(
-                                "Export Trajectory of Cam at index", self.export_cam_index, v_min=0, v_max=self.novel_view_renderer.get_camera_count() - 1
+                                "Choose Cam", self.export_cam_index, v_min=0, v_max=self.novel_view_renderer.get_camera_count() - 1
                             )
-                            psim.SameLine()
-                            if psim.Button("Export Trajectory"):
+                            
+                            psim.NewLine()
+                            if psim.Button("Render Current Cam Trajectory PNGS"):
+                                self.video_recorder.export_format = "png"
                                 self.populate_vid_trajectory(self.poses, self.export_cam_index)
+                                cam_name = self.novel_view_renderer.get_cam_name_at_index(self.export_cam_index)
+                                self.video_recorder.render_video(cam_name=cam_name if self.novel_view_renderer.is_loaded() else None)
+                            psim.SameLine()
+                            if psim.Button("Render Device Trajectory MCAP"):
+                                self.render_mcap_trajectory(self.poses)
                             psim.NewLine()
                             psim.Text(f"Cam {self.export_cam_index} to render.")
                             poses_list = self.novel_view_renderer.get_trajectory_poses()
@@ -777,12 +786,20 @@ class Playground:
             psim.TreePop()
     
     def populate_vid_trajectory(self, poses_list, idx=None):
-        """ Populates the video recorder trajectory with poses from the provided list. """
+        """ Populates the video recorder trajectory with poses from the provided list.
+            Moves rig to each pose and adds the camera view to the video recorder to 
+            be interpolated later.
+         Args:
+            poses_list (list): List of poses to populate the video recorder with (from
+            origin camera, since all trajectories are saved as origin camera/body poses )
+            idx (int, optional): Camera index to use for the poses. If None, uses
+                the currently selected camera index.
+        """
         self.video_recorder.trajectory = []
         if idx is None:
             idx = self.selected_camera_idx
         for pose in poses_list:
-            self.novel_view_renderer.move_rig_to_pose(pose, cam_index=idx, is_6dof=True)
+            self.novel_view_renderer.move_rig_to_pose(pose, is_6dof=True)
             self.add_cam_to_vid_recorder(idx)
             
 
@@ -1418,7 +1435,39 @@ class Playground:
 
         psim.PopItemWidth()
         return is_not_removed
-
+    from mcap.writer import Writer
+    def render_mcap_trajectory(self, poses):
+        """ Renders the trajectory to an mcap file from all cameras 
+        using the provided poses.
+        Args:
+            poses (list): List of poses (loaded trajectory from origin) to render.
+        """
+        self.mcap_convertor = McapConverter()
+        self.video_recorder.export_format = "mcap"
+        self.mcap_convertor.output_filename = "long_final_path.mcap"
+        self.mcap_convertor.set_filepath()
+        interval = self.mcap_convertor.calculate_time_interval()
+        cam_names = ["CamA", "CamB", "CamC", "CamD"]
+        with open (self.mcap_convertor.output_fullpath, 'wb') as stream:
+            writer = Writer(stream)
+            writer.start(profile = "VisualKit")
+            channels ={}
+            num_frames = self.video_recorder.get_num_frames(len(poses)) # change to get this frm self.vid_recorder
+            for cam_name in cam_names:
+                time_stamp = 0
+                self.video_recorder.reset_for_new_cam_path_export()
+                
+                # Now populate according to the cam name
+                index = cam_names.index(cam_name)
+                self.populate_vid_trajectory(poses, idx=index)
+                for i in trange(num_frames, desc = f"Writing frames for {cam_name}"):
+                    frame = self.video_recorder.obtain_single_camera_frame(frame_index=i, cam_name=cam_name)
+                    self.mcap_convertor.write_cam_frame_to_mcap(writer,channels,cam_name,frame,i, time_stamp)
+                    time_stamp += interval
+            
+            writer.finish()
+            sys.exit(f"MCAP file written to {self.mcap_convertor.output_fullpath}")
+                    
     @torch.cuda.nvtx.range("ps_ui_callback")
     def ps_ui_callback(self):
         """ Polyscope custom UI callback - used to draw gui menu"""

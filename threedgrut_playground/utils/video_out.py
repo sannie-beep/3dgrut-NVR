@@ -40,13 +40,15 @@ class VideoRecorder:
     """ A module for saving video footage of camera trajectories within the Playground"""
 
     MODES = ['path_smooth', 'path_spline', 'cyclic', 'depth_of_field']
+    EXPORT_FORMAT = ['png', 'mcap']
 
     def __init__(self,
         renderer,
         trajectory_output_path="output.mp4",
         cameras_save_path="cameras.npy",
-        mode='path_smooth',
-        frames_between_cameras=60,
+        mode='path_spline',
+        export_format='png',
+        frames_between_cameras=4,
         video_fps=30,
         min_dof=2.5,
         max_dof=24
@@ -75,6 +77,9 @@ class VideoRecorder:
         # Selected interpolation modes
         self.mode = mode
 
+        # Selected export format
+        self.export_format = export_format
+
         # Output path for generated video file
         self.trajectory_output_path = trajectory_output_path
 
@@ -93,7 +98,14 @@ class VideoRecorder:
 
     def add_camera(self, camera: Camera):
         self.trajectory.append(camera)
-
+    
+    def get_num_frames(self, list_len:int):
+        f_b = self.frames_between_cameras
+        num_intervals = list_len - 1
+        if num_intervals <= 0:
+            raise ValueError("Cannot calculate number of frames for an empty trajectory or a trajectory with a single camera.")
+        return num_intervals * f_b
+        
     def reset_trajectory(self):
         self.trajectory = []
 
@@ -102,6 +114,13 @@ class VideoRecorder:
 
     def load_trajectory(self):
         self.trajectory = torch.load(self.cameras_save_path)
+
+    def reset_for_new_cam_path_export(self):
+        """
+        Resets the trajectory and interpolated camera path to be populated with new cameras.
+        """
+        self.trajectory = []
+        self.interpolated_camera_path = None
 
     def render_dof_trajectory(self):
         out_video = None
@@ -126,14 +145,12 @@ class VideoRecorder:
             self.renderer.use_depth_of_field = old_use_dof
             self.renderer.depth_of_field.focus_z = old_focus_z
 
-    def render_linear_trajectory(self, interpolation_mode='polynomial', cam_name: str = "CamX"):
+    def render_linear_trajectory_to_png(self, interpolation_mode='catmull_rom', cam_name: str = "CamX"):
         if len(self.trajectory) < 2:
             raise ValueError('Rendering a path trajectory requires at least 2 cameras.')
         elif interpolation_mode == 'catmull_rom' and len(self.trajectory) < 4:
             raise ValueError('Rendering a path with a spline interpolated trajectory requires at least 4 cameras.')
         
-        print("RENDERING LINEAR TRAJECTORY!!!!!!")
-        out_video = None
         distortions = self.trajectory[0].distortion_coefficients if hasattr(self.trajectory[0], 'distortion_coefficients') else None
         intrinsics = self.trajectory[0].get_camera_intrinsics() if hasattr(self.trajectory[0], 'get_camera_intrinsics') else None
         if not intrinsics:
@@ -142,54 +159,69 @@ class VideoRecorder:
         interpolated_path = camera_path_generator(
             trajectory=self.trajectory,
             frames_between_cameras=self.frames_between_cameras,
-            interpolation=interpolation_mode
+            interpolation="catmull_rom"
         )
-        frames = []
+
+        cam_name = cam_name if cam_name else "CamX" 
+        images_filename = f"./ecal_pub_sub/{cam_name}/"
+        if not os.path.exists(images_filename):
+            os.makedirs(images_filename)
+        else:
+            os.rmdir(images_filename)
+            os.makedirs(images_filename)
+        camera_index = 0
         for camera in tqdm(interpolated_path):
             if not hasattr(camera, 'distortion_coefficients') or camera.distortion_coefficients is None:
-                # give it the attribute
-                camera.distortion_coefficients = distortions
-        
-            else:
-                print(f"LINEAR TRAJ CAM has distortion coefficients: {camera.distortion_coefficients}")
+                camera.distortion_coefficients = distortions   
             
             if not hasattr(camera, 'intrinsic_params') or camera.intrinsic_params is None:
                 fx, fy, cx, cy = intrinsics
                 camera.set_cam_intr(fx, fy, cx, cy)
-                print(f"LINEAR TRAJ CAM has intrinsic parameters: {camera.get_camera_intrinsics()}")
-            
-            else:
-                print(f"Camera {camera} has intrinsic parameters: {camera.get_camera_intrinsics()}")
-            
-            #print(f"CAM TYPE IN VID: {type(camera)}")
+
             rgb = self.renderer.render(camera)['rgb']
-            #check if the camera has distortion coefficients
-            
-            # TODO: Make a publisher for ecal rathe than writing to file
-            # if out_video is None:
-            #     out_video = cv2.VideoWriter(self.trajectory_output_path, cv2.VideoWriter_fourcc(*'mp4v'),
-            #                                 self.video_fps, (rgb.shape[2], rgb.shape[1]), True)
-            # data = rgb[0].clip(0, 1).detach().cpu().numpy()
-            # data = (data * 255).astype(np.uint8)
-            # data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
-            # out_video.write(data)
-            # also save the bgr buffers to a npz file
-            yuv420_arr = self.convert_to_yuv420(rgb)
-            frames.append(yuv420_arr)
+         
+            data = rgb[0].clip(0, 1).detach().cpu().numpy()
+            data = (data * 255).astype(np.uint8)
+            self.save_to_png(rgb, camera_index, images_filename)
+            camera_index += 1
         
-        frames = np.stack(frames, axis=0)
-        # Save the frames to a npz file
-        cam_name = cam_name if cam_name else "CamX" 
-        frames_filename = f"./{cam_name}.npz"
-        #np.savez_compressed(frames_filename, frames=frames)
-        np.savez_compressed(frames_filename, frames=frames)
-        print(f"Saved frames to {frames_filename}")
-
-
         import sys
-        sys.exit(f"Saved frames to {frames_filename} and exiting for now, please check the file.")
-        #out_video.release()
-        print(f"Saved video to {self.trajectory_output_path}")
+        sys.exit(f"Saved frames to {images_filename} and exiting for now, please check the folder.")
+
+    def obtain_single_camera_frame(self, frame_index:int, interpolation_mode='catmull_rom', cam_name: str = "CamX"):
+        if len(self.trajectory) < 2:
+            raise ValueError('Rendering a path trajectory requires at least 2 cameras.')
+        elif interpolation_mode == 'catmull_rom' and len(self.trajectory) < 4:
+            raise ValueError('Rendering a path with a spline interpolated trajectory requires at least 4 cameras.')
+        
+        distortions = self.trajectory[0].distortion_coefficients if hasattr(self.trajectory[0], 'distortion_coefficients') else None
+        intrinsics = self.trajectory[0].get_camera_intrinsics() if hasattr(self.trajectory[0], 'get_camera_intrinsics') else None
+        if not intrinsics:
+            raise ValueError("The first camera in the trajectory does not have intrinsic parameters. "
+                             "Ensure all cameras in the trajectory have valid intrinsic parameters.")
+        
+        if self.interpolated_camera_path is None:
+            interpolated_path = camera_path_generator(
+                trajectory=self.trajectory,
+                frames_between_cameras=self.frames_between_cameras,
+                interpolation=interpolation_mode
+            )
+            self.interpolated_camera_path = list(interpolated_path)
+
+        cam_name = cam_name if cam_name else "CamX"
+        
+        camera = self.interpolated_camera_path[frame_index]
+        if not hasattr(camera, 'distortion_coefficients') or camera.distortion_coefficients is None:
+            camera.distortion_coefficients = distortions   
+        
+        if not hasattr(camera, 'intrinsic_params') or camera.intrinsic_params is None:
+            fx, fy, cx, cy = intrinsics
+            camera.set_cam_intr(fx, fy, cx, cy)
+
+        rgb = self.renderer.render(camera)['rgb']
+        
+        bgr_frame = self.convert_to_bgr(rgb)       
+        return bgr_frame
 
     def render_continuous_trajectory(self):
         if len(self.trajectory) < 4:
@@ -267,22 +299,17 @@ class VideoRecorder:
 
         out_video.release()
         print(f"Saved video to {self.trajectory_output_path}")
+    
+    #def render_linear_trajectory_to_mcap_all_cams()
 
     def render_video(self, cam_name: str = "CamX"):
         """
         Renders the trajectory to a video file, according to the set mode (see init()).
         """
-        
-        if self.mode == 'depth_of_field':
-            self.render_dof_trajectory()
-        elif self.mode == 'cyclic':
-            self.render_continuous_trajectory()
-        elif self.mode == 'path_smooth':
-            self.render_linear_trajectory('polynomial', cam_name=cam_name)
-        elif self.mode == 'path_spline':
-            self.render_linear_trajectory('catmull_rom', cam_name=cam_name)
+        if self.export_format == 'png':
+            self.render_linear_trajectory_to_png(interpolation_mode=self.mode, cam_name=cam_name)
         else:
-            raise ValueError(f'Unknown mode: {self.mode}')
+            raise ValueError(f'Unknown export format: {self.ex}')
         
 
     def convert_to_bgr(self, rgb: torch.Tensor) -> np.ndarray:
@@ -310,3 +337,18 @@ class VideoRecorder:
         yuv420 = cv2.cvtColor(rgb_tensor, cv2.COLOR_RGB2YUV_I420)
         #print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, :]}")
         return yuv420
+    
+    def save_to_png(self, rgb: torch.Tensor, index: int, filepath:str):
+        """
+        Converts the RGB tensor to BGR numpy array to be published as imageMsg.data
+        with encoding bgr8.
+        """
+        bgr = rgb.clone().detach().cpu().numpy()
+        bgr.clip(0, 1, out=bgr)
+        bgr = (bgr * 255).astype(np.uint8).squeeze(0) # Convert to numpy for OpenCV compatibility
+        # Convert RGB to BGR for OpenCV compatibility
+        bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
+        #print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, :]}")
+        save_path = filepath + str(index).zfill(3) +".png"
+        cv2.imwrite(save_path, bgr)
+        

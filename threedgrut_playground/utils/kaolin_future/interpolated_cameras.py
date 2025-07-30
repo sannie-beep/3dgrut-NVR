@@ -324,10 +324,22 @@ def interpolate_camera_on_polynomial_path(
     # if cam.distortion_coefficients is None or len(cam.distortion_coefficients) == 0:
     #     raise ValueError("Interpolated camera does not have distortion coefficients. "
     #                      "Ensure all cameras in the trajectory have valid distortion coefficients.")
-    # else: print(f"Interpolated camera has distortion coefficients: {cam.distortion_coefficients}")
 
     return cam
 
+def get_intrinsics_of_first_cam(trajectory: List[Camera]) -> List[float]:
+    """ Returns the intrinsics of the first camera in the trajectory.
+    This is useful to ensure that the interpolated cameras have the same intrinsics as the first camera.
+
+    Args:
+        trajectory (List[Camera]): A trajectory of camera nodes.
+
+    Returns:
+        dict: Intrinsics of the first camera in the trajectory.
+    """
+    if not trajectory:
+        raise ValueError("The trajectory is empty. Cannot get intrinsics.")
+    return trajectory[0].get_camera_intrinsics()
 
 def interpolate_camera_on_spline_path(
     trajectory: List[Camera],
@@ -377,7 +389,6 @@ def interpolate_camera_on_spline_path(
 
     # Intrinsics
     intrinsics = dict()
-    print("CK1")
     if cam1.lens_type == 'pinhole':
         intrinsics['fov'] = (
             cam1.fov(in_degrees=False),
@@ -385,9 +396,7 @@ def interpolate_camera_on_spline_path(
             cam3.fov(in_degrees=False),
             cam4.fov(in_degrees=False)
         )
-        print("CK2")
     elif cam1.lens_type == 'ortho':
-        print("CK3")
         intrinsics['fov_distance'] = \
             (cam1.fov_distance(), cam2.fov_distance(), cam3.fov_distance(), cam4.fov_distance())
     else:
@@ -399,7 +408,7 @@ def interpolate_camera_on_spline_path(
     width = round(_catmull_rom(cam1.width, cam2.width, cam3.width, cam4.width, x))
     height = round(_catmull_rom(cam1.height, cam2.height, cam3.height, cam4.height, x))
 
-    fx, fy, cx, cy = cam1.get_intrinsic_params()
+    fx, fy, cx, cy = get_intrinsics_of_first_cam(trajectory= trajectory)
     # Create camera from view matrix
     cam = Camera.from_args(
         view_matrix=view_matrix,
@@ -436,7 +445,6 @@ def get_interpolator(interpolation: str, trajectory: List[Camera]) -> Callable:
     #     raise ValueError("All cameras in the trajectory must have 'distortion_coefficients' attribute.")
     
     if interpolation == 'polynomial':
-        print("Distortion coefficients are present before poly interpolation.")
         interpolator =  interpolate_camera_on_polynomial_path
         if len(trajectory) < 2:
             raise ValueError("For polynomial interpolation, cameras trajectory must have at least 2 cameras.")

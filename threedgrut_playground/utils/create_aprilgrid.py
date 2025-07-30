@@ -165,33 +165,25 @@ def create_tag(start_row: int, end_row: int, start_col: int, end_col:int, square
     except:
         print("[ERROR]: Requested tag ID of {0} not available in the {1} TagFamiliy".format(tagID, tagFamililyData.chosenTagFamiliy))     
 
-    print(f"code: {tag_code} type: {type(tag_code)}")
     texture[start_row:end_row, start_col:end_col, :3] = 1.0
     
     sqrt_bits = int(math.sqrt(tagFamililyData.totalBits))
     bit_square_size = int(square / (sqrt_bits))
-    print(bit_square_size)
     code_matrix = torch.tensor([1.0, 1.0, 1.0, 1.0],
                                         device=device, dtype=torch.float32).repeat(sqrt_bits*bit_square_size, sqrt_bits*bit_square_size,1)
-    print(code_matrix.size())
     matrix = torch.tensor([1.0, 1.0, 1.0, 1.0],
                                         device=device, dtype=torch.float32).repeat(sqrt_bits, sqrt_bits,1)
     for i in range(0, int(sqrt_bits)):
         for j in range(0, int(sqrt_bits)):
             if not tag_code & (1 << int(sqrt_bits)*i+j):
                 matrix[i,j, :3] = 0.0
-    print(matrix.size())
 
     code_matrix = torch.repeat_interleave(matrix, bit_square_size, dim=1)
     code_matrix = torch.repeat_interleave(code_matrix, bit_square_size, dim=0)
-    print(code_matrix.size())
     code_matrix = torch.rot90(code_matrix, 2)
     texture[start_row:end_row, start_col:end_col] = code_matrix
 
-    print(texture[start_row:end_row, start_col:end_col].size())
-    
     return texture
-    #print(code_matrix)
 
 
 
@@ -213,7 +205,4 @@ def main():
 if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     main()
-    print("Checkerboard texture created and displayed.")
 
-#l = [0x231b, 0x2ea5, 0x346a, 0x45b9, 0x79a6, 0x7f6b, 0xb358, 0xe745, 0xfe59, 0x156d, 0x380b, 0xf0ab, 0x0d84, 0x4736, 0x8c72, 0xaf10, 0x093c, 0x93b4, 0xa503, 0x468f, 0xe137, 0x5795, 0xdf42, 0x1c1d, 0xe9dc, 0x73ad, 0xad5f, 0xd530, 0x07ca, 0xaf2e]
-# print(len(l))

@@ -364,29 +364,29 @@ class Primitives:
         
         aprilgrid_texture = create_aprilgrid_texture(0.3, 800, device, 4, 7)
         default_materials = dict(
-            solid=PBRMaterial(
-                material_id=0,
-                diffuse_map=torch.tensor([130 / 255.0, 193 / 255.0, 255 / 255.0, 1.0],
-                                         device=device, dtype=torch.float32).expand(2, 2, 4),
-                diffuse_factor=torch.ones(4, device=device, dtype=torch.float32),
-                emissive_factor=torch.zeros(3, device=device, dtype=torch.float32),
-                metallic_factor=0.0,
-                roughness_factor=0.0,
-                transmission_factor=0.0,
-                ior=1.0
-            ),
-            checkboard=PBRMaterial(
-                material_id=1,
-                diffuse_map=checkboard_texture.contiguous(),
-                diffuse_factor=torch.ones(4, device=device, dtype=torch.float32),
-                emissive_factor=torch.zeros(3, device=device, dtype=torch.float32),
-                metallic_factor=0.0,
-                roughness_factor=0.0,
-                transmission_factor=0.0,
-                ior=1.0
-            ),
+            # solid=PBRMaterial(
+            #     material_id=0,
+            #     diffuse_map=torch.tensor([130 / 255.0, 193 / 255.0, 255 / 255.0, 1.0],
+            #                              device=device, dtype=torch.float32).expand(2, 2, 4),
+            #     diffuse_factor=torch.ones(4, device=device, dtype=torch.float32),
+            #     emissive_factor=torch.zeros(3, device=device, dtype=torch.float32),
+            #     metallic_factor=0.0,
+            #     roughness_factor=0.0,
+            #     transmission_factor=0.0,
+            #     ior=1.0
+            # ),
+            # checkboard=PBRMaterial(
+            #     material_id=1,
+            #     diffuse_map=checkboard_texture.contiguous(),
+            #     diffuse_factor=torch.ones(4, device=device, dtype=torch.float32),
+            #     emissive_factor=torch.zeros(3, device=device, dtype=torch.float32),
+            #     metallic_factor=0.0,
+            #     roughness_factor=0.0,
+            #     transmission_factor=0.0,
+            #     ior=1.0
+            # ),
             aprilgrid=PBRMaterial(
-                material_id=2,
+                material_id=1,
                 diffuse_map=aprilgrid_texture.contiguous(),
                 diffuse_factor=torch.ones(4, device=device, dtype=torch.float32),
                 emissive_factor=torch.zeros(3, device=device, dtype=torch.float32),
@@ -955,27 +955,16 @@ class Engine3DGRUT:
             ```
         """
         # Rendering 3DGRUT requires camera to run on cuda device -- avoid crashing
-        if camera.distortion_coefficients is not None:
-            print(f"Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
-        else:
-            print("Cam has no distortion coeffs in render_pass")
         if camera.device.type == 'cpu':
             # Preserve distortion_coefficients when moving to CUDA
             distortion_coeffs = getattr(camera, 'distortion_coefficients', None)
             # Preserve intrinsics also
             fx, fy, cx, cy = camera.get_camera_intrinsics()
             camera = camera.cuda()
-            #camera.distortion_coefficients = distortion_coeffs
-            
-
-        if getattr(camera, 'distortion_coefficients', None) is not None:
-            print(f"Cam has distortion coefficients starting with {camera.distortion_coefficients[0]}")
-        else:
-            print("Cam has no distortion coeffs in render_pass")
+            #camera.distortion_coefficients = distortion_coeffs       
 
         is_use_spp = not is_first_pass and not self.use_depth_of_field and self.use_spp
         # Here is where the rays are generated (in a rendering pass)
-        print(f"Render pass: {type(camera)}")
         rays = self.raygen(camera, use_spp=is_use_spp)
 
         if is_first_pass:
@@ -1009,16 +998,6 @@ class Engine3DGRUT:
             rb['rgb_buffer'][mask] = 0.0
             rb['opacity'][mask] = 0.0
         
-        #actual_rgb = (rb['rgb'].clone() * 255)
-        # actual_rgb = rb['rgb']
-        # print(f"RGB shape: {actual_rgb.shape}, First pixel: {actual_rgb[0, 0, 0, :]}")
-        # bgr = rb['rgb'].clone().detach().cpu().numpy().squeeze(0)
-        # #bgr = (bgr * 255).astype(np.uint8).squeeze(0) # Convert to numpy for OpenCV compatibility
-        # bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
-        # bgr = torch.from_numpy(bgr).to(self.device).unsqueeze(0)  # Convert back to tensor
-        # print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, 0,:]}")
-        # rb['rgb'] = bgr  # Store BGR image in the result
-
 
         if is_first_pass:
             bgr = self.convert_to_bgr(rb['rgb'])
@@ -1037,7 +1016,6 @@ class Engine3DGRUT:
             bgr = (bgr * 255).astype(np.uint8).squeeze(0) # Convert to numpy for OpenCV compatibility
             # Convert RGB to BGR for OpenCV compatibility
             bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
-            #print(f"BGR shape: {bgr.shape}, First pixel: {bgr[0, 0, :]}")
             return bgr
 
     @torch.cuda.nvtx.range("render")
@@ -1069,10 +1047,8 @@ class Engine3DGRUT:
         # check if cam has distortion coefficients else value error
         if getattr(camera, 'distortion_coefficients', None) is None:
             raise ValueError("Camera must have distortion coefficients for rendering.")
-        print(f"IN RENDER first pass: Cam is {type(camera)}")
         renderbuffers = self.render_pass(camera, is_first_pass=True)
         while self.has_progressive_effects_to_render():
-            print(f"IN RENDER not first pass: Cam is {type(camera)}")
             renderbuffers = self.render_pass(camera, is_first_pass=False)
         return renderbuffers
 
@@ -1315,11 +1291,6 @@ class Engine3DGRUT:
                 - pixel_x/y: Integer pixel coordinates
                 - mask: Boolean mask of valid rays (H, W, 1)
         """
-        print("kb4 raygen")
-        print(camera.width, camera.height, camera.device)
-        # pixel_y, pixel_x = generate_centered_pixel_coords(
-        #     1280, 800, device=camera.device
-        # )
         pixel_y, pixel_x = generate_centered_pixel_coords(
             camera.width, camera.height, device=camera.device
         )
@@ -1333,13 +1304,11 @@ class Engine3DGRUT:
         # testing to see if we can switch to fishye if the distortions are nonzero
         if camera.distortion_coefficients != None:
             distortion_coeffs = camera.distortion_coefficients
-            print(f"Using distortion coeff {distortion_coeffs[0]} for kb4 camera")
         else:
             distortion_coeffs = None  # or handle accordingly
 
         if distortion_coeffs is None or len(distortion_coeffs) == 0:
             # If no distortion coefficients are provided, use pinhole model
-            print("No distortion coefficients provided, using pinhole camera model")
             return self._raygen_pinhole(camera, jitter)
         
         # Keep this for debugging
@@ -1356,12 +1325,10 @@ class Engine3DGRUT:
 
         elif self.camera_type == 'Pinhole':
             # Fallback to pinhole if no distortion coefficients are provided
-            print("Using pinhole camera model for fisheye ray generation")
             return self._raygen_pinhole(camera, jitter)
         
         else:
             # Generate rays using double sphere fisheye unprojection
-            print(f"KB$ cam: {type(camera)}")
             rays_o, rays_d = generate_rays_kb4(camera, distortion_coeffs, ray_grid)
         
         return RayPack(
@@ -1393,7 +1360,6 @@ class Engine3DGRUT:
                 - pixel_x/y: Integer pixel coordinates
                 - mask: Boolean mask of valid rays (H, W, 1)
         """
-        print("fisheye raygen")
         pixel_y, pixel_x = generate_centered_pixel_coords(
             camera.width, camera.height, device=camera.device
         )
@@ -1407,13 +1373,11 @@ class Engine3DGRUT:
         # testing to see if we can switch to fishye if the distortions are nonzero
         if camera.distortion_coefficients is not None:
             distortion_coeffs = camera.distortion_coefficients
-            print(f"Using distortion coeff {distortion_coeffs[0]} for fisheye camera")
         else:
             distortion_coeffs = None  # or handle accordingly
 
         if distortion_coeffs is None or len(distortion_coeffs) == 0:
             # If no distortion coefficients are provided, use pinhole model
-            print("No distortion coefficients provided, using pinhole camera model")
             return self._raygen_pinhole(camera, jitter)
         
         # Keep this for debugging
@@ -1430,7 +1394,6 @@ class Engine3DGRUT:
 
         elif self.camera_type == 'Pinhole':
             # Fallback to pinhole if no distortion coefficients are provided
-            print("Using pinhole camera model for fisheye ray generation")
             return self._raygen_pinhole(camera, jitter)
         
         else:
@@ -1462,27 +1425,22 @@ class Engine3DGRUT:
             RayPack: Contains batched rays, where batch size is either 1 or
                 self.spp.batch_size if use_spp is True.
         """
-        print(f"Raygen: {type(camera)}")
         ray_batch_size = 1 if not use_spp else self.spp.batch_size
         rays = []
         distortion_coefficients = None
         if hasattr(camera, "distortion_coefficients") and camera.distortion_coefficients is not None and camera.distortion_coefficients[5] != 0.0:
-            print(f"In raygen DS dist: {camera.distortion_coefficients[0]}")
             distortion_coefficients = camera.distortion_coefficients
         else:
             
             if hasattr(camera, "distortion_coefficients") and camera.distortion_coefficients is not None:
                 distortion_coefficients = camera.distortion_coefficients
-                print(f"In raygen KB4 dist: {camera.distortion_coefficients[0]}")
         for _ in range(ray_batch_size):
             jitter = self.spp(camera.height, camera.width) if use_spp and self.spp is not None else None
             if distortion_coefficients is None:
-                print("Using pinhole camera model for ray generation")
                 next_rays = self._raygen_pinhole(camera, jitter)
             # elif distortion_coefficients is not None:
             #     next_rays = self._raygen_kb4(camera, jitter)
             elif distortion_coefficients is not None and distortion_coefficients[5] == 0.0:
-                print("Using KB4 unprojection for ray generation")
                 next_rays = self._raygen_kb4(camera, jitter)
             elif distortion_coefficients is not None and distortion_coefficients[5] != 0.0 and not self.camera_type == 'KB4':
                 next_rays = self._raygen_fisheye(camera, jitter)

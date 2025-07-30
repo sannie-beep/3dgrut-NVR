@@ -134,10 +134,10 @@ class NovelViewRenderer:
         # - accessing cameras
         # - movement to a defined point: VilotaDevice.move_rig_to()
         self.v_device = None
-        self.trajectory_filename = "test_1"  # Default trajectory filename
+        self.trajectory_filename = "video_trajectory"  # Default trajectory filename
         self.trajectory_folder = "./video_trajectories/"  # Default trajectory folder
         self.trajectory_parser = None
-        self.trajectory_fullpath = "./calibration_files/trajectories/test_1.csv"
+        self.trajectory_fullpath = "./video_trajectories/video_trajectory.csv"  # Default trajectory full path
         self.world_to_camd =[]
         self.world_to_cami = []
         self.i = 0  # Camera index to check
@@ -155,7 +155,7 @@ class NovelViewRenderer:
     def set_trajectory_filepath(self):
         """Sets the trajectory filename."""
         if not self.trajectory_filename:
-            self.trajectory_fullpath = self.trajectory_folder + "test_1.csv"
+            self.trajectory_fullpath = self.trajectory_folder + "video_trajectory.csv"
         self.trajectory_fullpath = self.trajectory_folder + self.trajectory_filename + ".csv"
 
     def is_loaded(self) -> bool:
@@ -316,12 +316,10 @@ class NovelViewRenderer:
     
     @ensure_loaded
     def add_pose_to_trajectory(self, pose:np.ndarray, cam_index:int):
-        print(f"Pose before {pose} to trajectory.")
         if cam_index != self.get_origin_camera_index():
             pose = self.v_device.get_view_from_origin_cam(pose, cam_index)
         pose = self.convert_view_matrix_to_6dof_pose(pose)
         self.trajectory = self.trajectory_parser.append_pose_to_file(pose)
-        print(f"Added pose {pose} to trajectory.")
         return self.trajectory
     
     @ensure_loaded
@@ -355,8 +353,6 @@ class NovelViewRenderer:
     def get_camera_intrinsics_at_index(self, index: int) -> List[float]:
         camera = self.get_camera_at_index(index)
         return self.get_camera_intrinsics(camera)
-        #intrs = camera.intrinsics.perspective_matrix().numpy()[:2, :3, :3]
-        #print(f"Camera {index} intrinsic projection matrix:\n{intrs}\n")
         
     
     def get_camera_intrinsics(self, camera) -> Tuple[float, float, float, float]:
@@ -439,18 +435,14 @@ class VilotaDevice:
     
     def get_cam_distortions(self) -> List[float]:
         """ Returns a list of distortion coefficients for all cameras. """
-        print("Getting camera distortions...")
         distortions = []
         for camera in self.cameras.values():
-            print(f"Camera {camera} distortion coefficients: {camera.distortion_coefficients}")
             if hasattr(camera, 'distortion_coefficients'):
                 dist = camera.distortion_coefficients
                 distortions.append(dist)
-                print(f"Dist: {dist}")
                 
             else:
                 distortions.append(None)
-                print(f"Camera {camera} does not have distortion coefficients.")
 
         return distortions
     
@@ -466,7 +458,6 @@ class VilotaDevice:
             f.write(f"Camera {i} extrinsics:\n")
             f.write(f"{self.extrinsics[i]}\n")
             f.write("\n")
-        print("Saved report to check_extrinsics.txt")
         #     # cam_a_to_camd : world_to_camd @ inv(world_to_cama) --> cam a extrinsic frm file ( verify this)
 
     def move_rig_to_view(self, new_view_matrix: np.ndarray, view_cam_index: int):
@@ -485,7 +476,6 @@ class VilotaDevice:
         is_view_from_origin = view_cam_index == og_index
         if not is_view_from_origin:
             new_view_matrix = self.get_view_from_origin_cam(new_view_matrix, view_cam_index)
-            print("Calculated new frm og")
         
         # Update each camera to new calculated view
         for index, camera in self.cameras.items():
@@ -644,23 +634,21 @@ class Loader:
         # Extract extrinsic params
         rotation_matrix = camera_params['ext_rotation']
         translation_vector = camera_params['ext_translation']
-
+        print(f"Rot {cam_rig_index}:{rotation_matrix}")
+        print(f"Trans {cam_rig_index}:{translation_vector}")
         
 
-        print(f"Rotation matrix: ", rotation_matrix)
         if rotation_matrix is None or len(rotation_matrix) == 0:
             rotation_matrix = [[0.0,0.0,0.0],[0.0,0.0,0.0],[0.0,0.0,0.0]]
             self.origin_camera_pose = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector)
             self.origin_camera = cam_rig_index
-            print(f"Set origin camera pose for camera {cam_rig_index} with zero rotation matrix.")
 
         elif rotation_matrix[0][0] == 0.0 and rotation_matrix[1][1] == 0.0 and rotation_matrix[2][2] == 0.0:
             self.origin_camera_pose = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector)
             self.origin_camera = cam_rig_index
-            print(f"Set origin camera pose for camera {cam_rig_index} with zero rotation matrix.")
          
         extrinsic_matrix = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector)
-        
+        print(f"Extrinsic Matrix {cam_rig_index}:\n{extrinsic_matrix}")
 
         # Convert to Distortion Camera object
         distortion_camera = Camera.from_args(
@@ -730,7 +718,6 @@ class TrajectoryPathParser:
         with open(self.trajectory_file, newline='') as f:
             reader = csv.reader(f)
             data = list(reader)
-        print(data)
         #save the poses as floats
         data = data[1:]  # Skip the header row
         data = [[float(x) for x in row] for row in data if len(row) == 6]  # Ensure each row has exactly 6 elements
@@ -756,7 +743,6 @@ class TrajectoryPathParser:
 
         poses = self.parse()
         return poses
-        #print(f"Created new trajectory file: {self.trajectory_file}")
     
     def append_pose_to_file(self, pose):
         """
@@ -767,7 +753,6 @@ class TrajectoryPathParser:
             writer.writerow(pose)  # Write the pose as a new row
         poses = self.parse()
         return poses
-        #print(f"Appended {len(self.poses)} poses to {self.trajectory_file}.")
 
 ############# TEST FUNCTIONS ######################
 

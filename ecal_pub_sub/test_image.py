@@ -122,7 +122,7 @@ def main():
     n = len(sys.argv)
     topic_string=""
     if n == 1:
-        topics = ["S0/camd"]
+        topics = ["S0/cama"]
     elif n >= 2:
         topics = []
         for i in range(1, n):

@@ -52,6 +52,7 @@ import time
 import numpy as np
 import ecal.core.core as ecal_core
 
+
 from capnp_publisher import CapnpPublisher
 import capnp
 import cv2
@@ -91,7 +92,17 @@ def load_frames_npz(cam_name: str = "CamX"):
     #print("Frames shape:", frames.shape)
     return frames
 
-
+def load_frames_bgr_from_png_folder(cam_name: str = "CamX"):
+    folder = f"./{cam_name}/"
+    # get list of PNGs first
+    pngs = sorted(f for f in os.listdir(folder) if f.endswith('.png'))
+    # read one to get shape
+    sample = cv2.imread(os.path.join(folder, pngs[0]))
+    n, h, w, c = len(pngs), *sample.shape
+    frames = np.empty((n, h, w, c), dtype=sample.dtype)
+    for i, fname in enumerate(pngs):
+        frames[i] = cv2.imread(os.path.join(folder, fname))
+    return frames
 
 def build_image_message(img_array : np.ndarray, index: int, cam_index:int, name:str, encoding:str):
     """
