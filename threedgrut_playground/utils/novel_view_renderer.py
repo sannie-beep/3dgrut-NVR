@@ -479,16 +479,19 @@ class VilotaDevice:
         
         # Update each camera to new calculated view
         for index, camera in self.cameras.items():
-            world_to_cam0 = new_view_matrix
+            F = np.diag([1, -1, -1, 1])
+            world_to_cam0 = F@ new_view_matrix @F
             cam0_to_world = np.linalg.inv(world_to_cam0)
             cam_i_to_cam0 = self.extrinsics[index]
             cami_to_world = cam0_to_world @ np.array(cam_i_to_cam0)
+            
             world_to_cami = np.linalg.inv(cami_to_world)  # Invert to get the view matrix
-            camera.update(torch.tensor(world_to_cami, dtype=torch.float64)) 
+            new_view_mat = F @ world_to_cami @ F
+            camera.update(torch.tensor(new_view_mat, dtype=torch.float64)) 
         
         # Update the origin camera pose
-        self.cameras[og_index].update(torch.tensor(new_view_matrix, dtype=torch.float64))  # Update the origin camera's view matrix
-        self.origin_camera_pose = new_view_matrix
+        # self.cameras[og_index].update(torch.tensor(new_view_matrix, dtype=torch.float64))  # Update the origin camera's view matrix
+        # self.origin_camera_pose = new_view_matrix
     
 
     def get_view_from_origin_cam(self, world_to_cami: np.ndarray, cam_index : int) -> np.ndarray:

@@ -99,7 +99,7 @@ class McapConverter:
             # You can adjust these parameters as needed
             channel_id = writer.register_channel(
                 schema_id=0,
-                topic=f"S0/{cam_name.lower()}",
+                topic=f"S1/{cam_name.lower()}",
                 message_encoding="image/jpeg",
                 metadata={"camera_name": cam_name}
             )
