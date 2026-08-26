@@ -276,7 +276,7 @@ def estimate_theta_star(
 
     num_steps = int((math.pi - 0.0) / step_size)
     theta_vals = torch.linspace(0.0, math.pi, steps=num_steps, device=device, dtype=dtype)
-    d = lambda theta: theta + k1 * theta**2 + k2 * theta**5 + k3 * theta**7 + k4 * theta**9
+    d = lambda theta: theta + k1 * theta**3 + k2 * theta**5 + k3 * theta**7 + k4 * theta**9
     R = d(theta_vals)  # (num_steps,)
 
     # ru: (...), need to find theta_star for each ru
