@@ -327,6 +327,11 @@ and 756 for CamD), not the old CamD-aimed one. Coverage numbers above are for
 this orbit.
 
 ## Conventions
+- **Never start a render. Renders are the user's to run.** If a step needs
+  one, list the GUI steps and stop. The user runs it and says when the MCAP
+  is written. Claude handles code, tests, the detector, the solver, and
+  analysis — not the render itself. `drive_render.py` documents the call
+  sequence and is useful for reading the settings off; do not execute it.
 - Never guess an intrinsic value. Read it from `vk180.json`.
 - Before every render check: quad sized (wider than tall), dropdown, and
   `only_cams`. A wrong setting costs 12 minutes.
