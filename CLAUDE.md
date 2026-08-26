@@ -308,9 +308,7 @@ always draws 0-27), four+ quads at different depths, and matching
 
 ## Rendering without the GUI
 `ps_gui.py` drives everything from imgui buttons, so a scripted run has to call
-the same methods in the same order. Working driver:
-`/tmp/claude-1000/.../scratchpad/drive_render.py` (session scratch — copy it
-into the repo if it is worth keeping). Sequence:
+the same methods in the same order. Working driver: `drive_render.py` in the repo root. Sequence:
 `Playground(...)` -> `novel_view_renderer.load_device()` -> quad
 `transform.reset(); sx=1.410; sy=0.825` -> `engine.camera_type = 'KB4'` ->
 `video_recorder.frames_between_cameras = 1` -> `build_orbit_trajectory(pg)` ->
