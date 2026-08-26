@@ -526,7 +526,7 @@ class Playground:
         cam_w, cam_h = cam.width, cam.height
         ps_cam_params = polyscope_from_kaolin_camera(cam)
         camera = polyscope_to_kaolin_camera(
-                    ps_cam_params, width=cam_w, height=cam_h, distortion_coefficients=self.distortions[self.selected_camera_idx] if self.selected_camera_idx is not None else None,
+                    ps_cam_params, width=cam_w, height=cam_h, distortion_coefficients=self.distortions[index] if index is not None else None,
                     fx = fx, fy = fy, cx = cx, cy = cy
                 )
         camera.set_cam_intr(fx, fy, cx, cy)
@@ -629,7 +629,8 @@ class Playground:
                             psim.SameLine()
                             self._draw_single_vk_cam(idx, camera)
                     psim.Text(f"Origin camera = {self.novel_view_renderer.get_origin_camera_index()}")
-                
+                    psim.TreePop()
+
                 if psim.TreeNode("Save/Load Video trajectory"):
                     if self._trajectory_status:
                         psim.Text(self._trajectory_status)
@@ -649,6 +650,21 @@ class Playground:
                         except Exception as e:
                             self._trajectory_status = f"{e}"
                     psim.SameLine()
+                    if psim.Button("Build Orbit Trajectory"):
+                        from threedgrut_playground.utils.orbit_trajectory import build_orbit_trajectory
+                        try:
+                            self.poses = build_orbit_trajectory(
+                                self, flip=getattr(self, "orbit_flip", False)
+                            )
+                            self._trajectory_status = f"Orbit built: {len(self.poses)} poses"
+                            self.trajectory_loaded = True
+                        except Exception as e:
+                            self._trajectory_status = f"Orbit failed: {e}"
+                    psim.SameLine()
+                    _, self.orbit_flip = psim.Checkbox(
+                        "Flip side", getattr(self, "orbit_flip", False)
+                    )
+
                     if psim.Button("Create New Trajectory"):
                         self.poses = self.novel_view_renderer.create_new_trajectory()
                         self._trajectory_status = "Created a new trajectory. Add poses to it."
@@ -679,6 +695,7 @@ class Playground:
                             poses_list = self.novel_view_renderer.get_trajectory_poses()
                             self.poses = poses_list
                             self._draw_cam_trajectory_view(self.poses)
+                            psim.TreePop()
 
                     psim.TreePop()
 
@@ -782,7 +799,6 @@ class Playground:
             #         up = view_params.get_up_dir()
             #         ps.look_at_dir(eye, target, up, fly_to=True)
 
-            psim.PopItemWidth()
             psim.TreePop()
     
     def populate_vid_trajectory(self, poses_list, idx=None):
@@ -1274,7 +1290,6 @@ class Playground:
                 object_transform.sx = sx
                 object_transform.sy = sy
                 transform_changed = True
-            psim.PopItemWidth()
 
             if transform_changed:
                 self.primitives.rebuild_bvh_if_needed(force=True, rebuild=False)
@@ -1448,12 +1463,16 @@ class Playground:
         self.mcap_convertor.set_filepath()
         interval = self.mcap_convertor.calculate_time_interval()
         cam_names = ["CamA", "CamB", "CamC", "CamD"]
+        # Render a subset. Set to None for all four.
+        only_cams = None
         with open (self.mcap_convertor.output_fullpath, 'wb') as stream:
             writer = Writer(stream)
             writer.start(profile = "VisualKit")
             channels ={}
             num_frames = self.video_recorder.get_num_frames(len(poses)) # change to get this frm self.vid_recorder
             for cam_name in cam_names:
+                if only_cams and cam_name not in only_cams:
+                    continue
                 time_stamp = 0
                 self.video_recorder.reset_for_new_cam_path_export()
                 

@@ -70,8 +70,8 @@ Removing this alone would NOT have been correct — see bug 4, which it masked.
 
 ### 2. `threedgrut_playground/ps_gui.py` lines ~1465-1472
 `cam_names.index(cam_name)` selects the extrinsics, so `cam_names` must keep
-all four names. Subset renders with `only_cams` instead. Currently
-`["CamD"]`. Set to `None` for all four. Never trim `cam_names` itself.
+all four names. Subset renders with `only_cams` instead. Now `None` (all
+four). Never trim `cam_names` itself.
 
 ### 3. `calculate_sx_and_sy` rows/cols swap (GUI trap 2 above).
 
@@ -118,6 +118,24 @@ on the principal point gives NaN, and its docstring promises an
 theta 2.868 rad, past its 1.81 rad corner, so the table is only valid below
 that. Deferred to a third commit.
 
+### 6. Distortion indexed by the GUI selection, not the camera — FIXED (ps_gui.py:529)
+`add_cam_to_vid_recorder(self, index)` took intrinsics from `index` but
+distortion from `self.selected_camera_idx`:
+```python
+distortion_coefficients=self.distortions[self.selected_camera_idx] ...  # was
+distortion_coefficients=self.distortions[index] ...                     # is
+```
+Every multi-camera export therefore paired each camera's own intrinsics with
+whatever camera the GUI happened to have selected — by default index 0, CamA.
+A four-camera render would have given all four CamA's k. Found because the
+headless driver leaves `selected_camera_idx` as None, which turned the silent
+wrong-coefficient path into `ValueError: Camera must have distortion
+coefficients for rendering`. In the GUI it would never have raised.
+
+This is a third way a CamD-only result could look fine while the rig was
+wrong, so keep the pre-flight check in the driver: it asserts every camera's
+fx and k[0:4] against `vk180.json` before a frame is rendered.
+
 ### Search range units — checked, not a bug
 The live code builds `linspace(0, pi, steps=int(pi/step_size))`: 0..pi rad,
 correct. The commented `theta_range = (0.0, 180.0)` at line 266 is dead and
@@ -126,6 +144,54 @@ never read. Do not wire it in — as radians it would span 10313 deg. Note
 rad, about 0.395 px at CamA fx.
 
 ## Results
+
+### Four-camera KB4 render → KB4 fit, 2026-08-26 — PASS, distortion validated
+Post-fix (87bae80 + 60bcdf5 + the ps_gui.py:529 fix). Dataset
+`mcap_outputs/orbit_4cam_kb4fix.mcap`, tags `orbit_4cam_kb4fix_tags.mcap`.
+Per-camera orbit, 1296 poses, 1295 frames per camera, 71378 detections.
+
+`success = true` for all four cameras. 0 of 621/949/953/1221 poses rejected.
+Mean reprojection 0.414 px (cama 0.409, camb 0.419, camc 0.418, camd 0.410).
+
+| cam | fx err | fy err | cx err | cy err | fov gate |
+|---|---|---|---|---|---|
+| CamA | +0.043% | +0.014% | -0.493 | -0.809 | 146 >= 130 |
+| CamB | +0.001% | -0.033% | -0.452 | -0.457 | 142 >= 129 |
+| CamC | -0.004% | -0.037% | -0.538 | -0.489 | 146 >= 130 |
+| CamD | -0.020% | -0.047% | -0.485 | -0.467 | 202 >= 184 |
+
+**Distortion now matches the file — this is the result bug 1 was hiding.**
+
+| cam | k1 | k2 | k3 | k4 |
+|---|---|---|---|---|
+| CamA | -0.15% | +1.64% | +0.77% | +0.65% |
+| CamB | -0.14% | -0.11% | -0.36% | -0.70% |
+| CamC | -0.17% | +1.40% | +0.32% | +0.00% |
+| CamD | (see below) | -12.6% | +0.81% | +2.46% |
+
+CamA k1 recovers 0.3721 against the file's 0.372647. Pre-fix the same camera
+returned -1.8e-4. CamD's k1 is -3.03e-05 in the file and +2.19e-05 recovered:
+a sign flip on a number that is essentially zero, so the relative error is
+meaningless — CamD is nearly equidistant and k3 (0.81%) is its dominant term.
+
+This is the first run that validates the distortion path. Combined with the
+earlier focal/principal-point/geometry/detector/solver evidence, the KB4
+synthetic loop is now end-to-end.
+
+The cx/cy offsets are the known half-pixel convention effect, unchanged.
+
+#### Board coverage, per-camera orbit
+| cam | frames | zero-tag | zero % | detections | mean/frame | >=12 tags |
+|---|---|---|---|---|---|---|
+| cama | 1265 | 513 | 40.6% | 9013 | 7.12 | 26.6% |
+| camb | 1265 | 209 | 16.5% | 17316 | 13.69 | 58.5% |
+| camc | 1265 | 211 | 16.7% | 17477 | 13.82 | 58.8% |
+| camd | 1266 | 19 | 1.5% | 27572 | 21.78 | 93.3% |
+
+CamA is the weak one at 40.6% zero-tag; CamB/CamC are fine at ~16.5%. It
+still converged, but CamA has the fewest retained poses (621 vs 949/953/1221)
+and the largest fx error. If CamA needs tightening, aim its grid, not the
+whole orbit.
 
 ### KB4 render → KB4 fit, CamD only, 2026-08-26 — PASS, but SUPERSEDED
 **Obtained with the bug 1 override ACTIVE (pre-60bcdf5), so the render was
@@ -203,6 +269,21 @@ TOPIC="S1/camd/tags:queued" ./run_offline_tags.sh <name>_img.mcap <name>_tags.mc
   in `ecal_pub_sub/CamD/`.
 - `python tests/test_estimate_theta_star.py` — KB4 inverse round trip. No GPU,
   no render, ~1 s. Run it after any edit to `fisheye.py`.
+- Four-camera pipeline (topics and config differ from the CamD-only one):
+```bash
+python fix_mcap_labels.py mcap_outputs/<name>.mcap <name>_img.mcap \
+  --topics S1/cama S1/camb S1/camc S1/camd --serial DP180IP-2404-0004
+CONFIG=offline_tags_all.json \
+TOPIC="S1/cama/tags:queued S1/camb/tags:queued S1/camc/tags:queued S1/camd/tags:queued" \
+  ./run_offline_tags.sh <name>_img.mcap <name>_tags.mcap
+~/vk_src/vk_calibrate/build/vk_calibrate --vbag-path <name>_tags.mcap \
+  --cam-types kb4 kb4 kb4 kb4 \
+  --focal-lengths 395.21 396.92 395.67 614.85 --tag-size 0.15
+```
+  `offline_tags_all.json` is the four-camera detector config; the CamD-only
+  `offline_tags_camd.json` silently yields one topic. Timings on this box:
+  render 4x1295 frames ~11 min (KB4 cams ~13 it/s, CamD ~5 it/s), relabel 34 s,
+  detection ~1 min, solve ~2 s. MCAP is ~3.4 GB (chunk-compressed).
 
 ## Multi-board blueprint (for the DS degeneracy fix)
 The real rig config `/opt/vilota/configs/camera_driver/vk180_calibration.json`
@@ -215,15 +296,37 @@ always draws 0-27), four+ quads at different depths, and matching
 `april_grids` entries in the detector config.
 
 ## Open work, in order
-1. DONE 2026-08-26: `estimate_theta_star` verified, typo fixed (87bae80),
-   override removed (60bcdf5). NOT yet re-rendered. Next: re-render and re-fit
-   CamD (k must now match the file), then all four cameras with the per-camera
-   orbit. Every render before 60bcdf5 is equidistant — regenerate, do not
-   reuse. Optional third commit: the bug 5 clamp/eps.
+1. DONE 2026-08-26. `estimate_theta_star` verified, typo fixed (87bae80),
+   override removed (60bcdf5), distortion indexing fixed (ps_gui.py:529),
+   four-camera KB4 re-render and re-fit PASS with k matching the file.
+   Every render before 60bcdf5 is equidistant — regenerate, never reuse.
+   Still open: the bug 5 clamp/eps commit.
 2. Multi-board scene, then retry Double Sphere single-camera.
 3. The report. Ingredients on disk: real-device control, three-model table
    (kb4 pass / radtan8 fail / ds fail), residual curve, eliminated-causes
    list, the two GUI traps, and the passing KB4 run.
+
+## Rendering without the GUI
+`ps_gui.py` drives everything from imgui buttons, so a scripted run has to call
+the same methods in the same order. Working driver:
+`/tmp/claude-1000/.../scratchpad/drive_render.py` (session scratch — copy it
+into the repo if it is worth keeping). Sequence:
+`Playground(...)` -> `novel_view_renderer.load_device()` -> quad
+`transform.reset(); sx=1.410; sy=0.825` -> `engine.camera_type = 'KB4'` ->
+`video_recorder.frames_between_cameras = 1` -> `build_orbit_trajectory(pg)` ->
+`pg.render_mcap_trajectory(poses)`. Needs `DISPLAY=:1` — polyscope still opens
+a real GL window; it just never needs a click. `render_mcap_trajectory` ends
+in `sys.exit()`.
+
+The driver asserts before rendering, which is what turns a 12-minute mistake
+into an instant one: quad wider than tall, override gone, `theta**3` present,
+`only_cams` None, and every camera's fx/k[0:4] against `vk180.json`.
+
+`threedgrut_playground/utils/orbit_trajectory.py` is byte-identical to
+`~/orbit_percam.py.bak` — the "Build Orbit Trajectory" button already builds
+the PER-CAMERA orbit (aim grids per camera type, 180 poses each for CamA/B/C
+and 756 for CamD), not the old CamD-aimed one. Coverage numbers above are for
+this orbit.
 
 ## Conventions
 - Never guess an intrinsic value. Read it from `vk180.json`.
