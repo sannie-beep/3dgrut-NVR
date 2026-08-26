@@ -428,7 +428,9 @@ class VilotaDevice:
         elif self.name.startswith("DP180IP"):
             
             return VILOTA_CAM_MAP["DP180IP"]["cam_names"][index]
-        elif self.product_name_name.startswith("VKL-"):
+        elif self.product_name.startswith("VK180"):
+            return VILOTA_CAM_MAP["DP180IP"]["cam_names"][index]
+        elif self.product_name.startswith("VKL-"):
             return VILOTA_CAM_MAP["VKL"]["cam_names"][index]
         else:
             raise ValueError(f"Unknown camera index {index} for device {self.name}.")
