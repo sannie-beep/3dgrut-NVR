@@ -232,57 +232,46 @@ detector, solver, and focal/principal-point recovery, and nothing about the
 distortion path. Not end-to-end validation. The post-fix re-run is the one
 that tests distortion.
 
-### Double Sphere single-plane — 3.4% focal bias — INVALID, NOT a degeneracy
-**Retracted 2026-08-26. The DS runs were never Double Sphere renders. They
-were equidistant renders, and the "bias" is a DS model fitted to an
-equidistant image. Do not put this in the report as a degeneracy result.**
+### Double Sphere, CamD, correct render, 2026-08-26 — PASS. No degeneracy.
+Dataset `mcap_outputs/orbit_ds_fix.mcap` (1295 frames, CamD only, dropdown on
+Double Sphere Fisheye, Select CamD clicked first), tags
+`orbit_ds_fix_tags.mcap`. `--cam-types ds --focal-lengths 431 --tag-size 0.15`.
 
-Proof, from `tags_extreme.mcap` alone (the recorded best run's detections,
-no re-render needed) — the same corners fitted with two models:
+`success = true`, fov gate **202 >= 186 PASSES**, calibrated_r 1093.0 px
+(ratio 0.965), 0 of 1221 poses rejected, mean reprojection **0.406 px**.
 
-| fit | focal | k / xi | reproj | success |
-|---|---|---|---|---|
-| ds | 446.008 (+3.43%) | xi -0.277063, alpha 0.56218 | — | false, fov 186<190 |
-| kb4 | **614.820** | k = [-2.8e-04, 2.7e-04, -1.1e-04, 1.3e-05] | 0.4 px | true, fov 206 |
+| param | truth | recovered | err |
+|---|---|---|---|
+| fx | 431.2301 | 431.176 | **-0.013%** |
+| fy | 430.4876 | 430.328 | -0.037% |
+| cx | 939.6711 | 939.200 | -0.471 px |
+| cy | 585.3367 | 584.853 | -0.484 px |
+| xi | -0.3016 | -0.301522 | 0.026% |
+| alpha | 0.5530 | 0.553021 | 0.004% |
 
-The kb4 fit lands 0.004% from the file's KB4 focal 614.8465 with k ~ 0.
-That is the signature of an equidistant image. A genuine DS render cannot
-look like this:
+**The 3.4% "bias" was entirely the bad render. It is now 0.013%.** xi and
+alpha both land within 0.03%, so they did not trade against focal length.
+There is no Double Sphere degeneracy in this setup, single board and all.
+cx/cy carry the usual half-pixel offset, unchanged.
 
-| render fitted with KB4 | f | k1 |
-|---|---|---|
-| true Double Sphere | 617.328 | -1.60e-02 |
-| equidistant | 614.846 | ~0 |
-| **tags_extreme (actual)** | **614.820** | **-2.82e-04** |
+#### Branch confirmation
+Fitting the SAME detections with kb4 must show the DS signature. Predicted
+from the code before this render, vs measured:
 
-k1 is 57x smaller than the DS signature. The render was equidistant.
+| | predicted (true DS) | measured | old tags_extreme |
+|---|---|---|---|
+| f | 617.328 | 617.189 | 614.820 |
+| k1 | -1.598e-02 | **-1.591e-02** | -2.82e-04 |
+| k2 | 1.531e-02 | 1.514e-02 | 2.68e-04 |
+| k3 | -4.046e-03 | -3.934e-03 | -1.07e-04 |
+| k4 | 3.067e-04 | 2.811e-04 | 1.30e-05 |
 
-And the observed DS numbers are predicted by fitting DS to an equidistant
-f=614.85 image over a ~190 deg field: f 445.20, xi -0.2784, alpha 0.5617,
-against the observed 446.008, -0.277063, 0.56218. All three parameters.
+Measured/predicted k1 ratio 0.995, and k1 is 56.5x larger than the retracted
+run's. This render took the DS branch; `tags_extreme` did not. That closes the
+retraction: the old DS numbers were an equidistant render, this one is real.
 
-Cause: with `camera_type = 'Double Sphere Fisheye'` the dispatch
-(engine.py:1443) tests `distortion_coefficients[5] == 0.0` FIRST and routes
-to `_raygen_kb4`. CamA's DS slot is all zeros, so bug 6 handing the renderer
-CamA's coefficients silently downgraded the DS render to KB4, which bug 1
-then made equidistant. The dropdown being left on KB4 (GUI trap 3) produces
-the identical image, so the data cannot separate the two. Either way the
-render was not DS.
-
-What this retracts:
-- the 3.4% figure as a measurement of anything about Double Sphere;
-- "xi trades against focal length, one board at one depth cannot separate
-  them" — plausible, but this experiment never tested it;
-- the +/-0.3 px residual wave in `~/plot_aa.json` — that is the
-  equidistant-vs-DS mismatch, not a degeneracy signature;
-- the eliminated-causes list (trajectory, aim, distance, scene content,
-  antialiasing, pixel grid, texture geometry). The eliminations are sound but
-  they were chasing a bias with a different cause.
-
-What survives: the projection-formula check (playground unproject vs basalt
-project, exact inverses to 5 decimals) is a unit test of the maths and stands.
-`generate_fisheye_rays_double_sphere` has still never been validated by a
-render — no DS image on disk was produced by it.
+`generate_fisheye_rays_double_sphere` is now validated by a render, not just
+by the unit-test inverse check.
 
 ### Real-device control
 `real_device.mcap`, 674 frames. DS single-camera step 0 lands 0.48% off, and
@@ -345,10 +334,10 @@ TOPIC="S1/cama/tags:queued S1/camb/tags:queued S1/camc/tags:queued S1/camd/tags:
   render 4x1295 frames ~11 min (KB4 cams ~13 it/s, CamD ~5 it/s), relabel 34 s,
   detection ~1 min, solve ~2 s. MCAP is ~3.4 GB (chunk-compressed).
 
-## Multi-board blueprint (motivation now unconfirmed)
-The degeneracy this was meant to fix has not actually been observed — see the
-retracted DS result. Re-measure DS with a correct render first; only build the
-multi-board scene if a real bias survives.
+## Multi-board blueprint (NOT needed — kept for reference only)
+This was built to break a Double Sphere degeneracy that does not exist. With a
+correct render, single-board DS recovers fx to 0.013% and xi to 0.026%. Do not
+spend time here unless some future result actually calls for multiple boards.
 
 The real rig config `/opt/vilota/configs/camera_driver/vk180_calibration.json`
 declares six grids: 1x3, 2x2, and four 7x4 boards with start_ids [0],
@@ -365,16 +354,18 @@ always draws 0-27), four+ quads at different depths, and matching
    four-camera KB4 re-render and re-fit PASS with k matching the file.
    Every render before 60bcdf5 is equidistant — regenerate, never reuse.
    Still open: the bug 5 clamp/eps commit.
-2. Re-measure Double Sphere. The recorded 3.4% is retracted (equidistant
-   render, not DS). Needs a fresh CamD render with the dropdown on Double
-   Sphere and CamD's own coefficients reaching the renderer — the pre-flight
-   in `drive_render.py` checks the latter. Then fit `--cam-types ds`. If it
-   returns ~431.2 the renderer's DS path is validated and there is no
-   degeneracy to fix; only if a real bias survives is the multi-board scene
-   worth building.
-3. The report. Ingredients on disk: real-device control, three-model table
-   (kb4 pass / radtan8 fail / ds fail), residual curve, eliminated-causes
-   list, the two GUI traps, and the passing KB4 run.
+2. DONE 2026-08-26. Double Sphere re-measured with a correct render: 0.013%
+   on fx, fov gate passes, no degeneracy. Multi-board scene not needed.
+3. The report. Both camera models now pass on correct renders, so the story is
+   no longer "kb4 passes, ds fails" — it is "three renderer bugs made ds look
+   like it failed". Ingredients on disk: the real-device control; the
+   four-camera KB4 run (focal 0.05%, k within 1.6%); the CamD DS run (fx
+   0.013%, xi 0.026%); the KB4-cross-check table that proves which ray branch
+   each render took; bugs 1/4/6 with before-and-after numbers; the GUI traps.
+   The retracted 3.4% belongs in the report as a worked example of a
+   self-consistent result that was not a faithful simulation.
+   Still open: the bug 5 clamp/eps commit. radtan8 was never re-tested after
+   the fixes — its recorded failure is not trustworthy either.
 
 ## Rendering without the GUI
 `ps_gui.py` drives everything from imgui buttons, so a scripted run has to call
