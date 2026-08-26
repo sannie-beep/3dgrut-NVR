@@ -52,6 +52,19 @@ reads the entry that matches its own model: KB4 reads
 4. The GUI writes every export to `mcap_outputs/long_final_path.mcap`.
    Rename it before the next render overwrites it.
 5. Ctrl+click **Frames Between** to type a value. Keep it at 1.
+6. "Not Fisheye" next to a Select button is **not** a bug and does not mean
+   the DS parameters failed to load. `_draw_single_vk_cam` is called only for
+   the SELECTED camera (`ps_gui.py` ~1465: the `if psim.Button(...)` fires
+   only on the click frame, the `elif self.selected_camera_idx == idx` covers
+   the rest). Unselected cameras draw a bare button with no text at all, and
+   `psim.SameLine()` puts the selected camera's text on its own button's row.
+   `selected_camera_idx` defaults to 0, so at startup the only text on screen
+   is CamA's — and "Not Fisheye" is correct for CamA, whose DS slot is zeros.
+   Verified by loading `VilotaDevice` directly: CamD is idx 3 with
+   `distortionCoeff[5] = 431.2301`, so its condition is True and it reads
+   "xi: -0.3, alpha: 0.55" once actually selected.
+   Treat "Not Fisheye" at startup as the visible tell that **CamA is
+   selected** — the state that silently downgraded every DS render (bug 6).
 
 ## Known code bugs
 
@@ -135,6 +148,11 @@ coefficients for rendering`. In the GUI it would never have raised.
 This is a third way a CamD-only result could look fine while the rig was
 wrong, so keep the pre-flight check in the driver: it asserts every camera's
 fx and k[0:4] against `vk180.json` before a frame is rendered.
+
+The MCAP export path no longer reads `selected_camera_idx`. The LIVE canvas
+preview still does (`ps_gui.py:208`, `update_render_view_viz`), which is
+correct — it previews the selected camera. So clicking Select CamD still
+changes what you see on screen; it no longer changes what gets exported.
 
 ### Search range units — checked, not a bug
 The live code builds `linspace(0, pi, steps=int(pi/step_size))`: 0..pi rad,
