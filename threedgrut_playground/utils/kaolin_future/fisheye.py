@@ -362,7 +362,6 @@ def generate_rays_kb4(
         device=ru.device,
         dtype=ru.dtype
     )
-    theta_star = ru
 
     sin_t = torch.sin(theta_star)
     cos_t = torch.cos(theta_star)
