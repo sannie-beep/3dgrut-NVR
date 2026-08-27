@@ -1269,7 +1269,7 @@ class Playground:
             #     object_transform.reset()
             #     transform_changed = True
             # psim.PopItemWidth()
-            if psim.Button("Reset to 15cm square size"):
+            if psim.Button("Reset to 30cm square size"):
                 object_transform.reset()
                 object_transform.sx = 1.410
                 object_transform.sy = 0.825
