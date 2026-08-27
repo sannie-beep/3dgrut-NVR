@@ -18,7 +18,6 @@ from tqdm import trange
 CAMERA_NAMES = ["CamA", "CamB", "CamC", "CamD"]
 #image_dir = "./"  # should have subfolders like cama/, camb/, etc.
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '../vk_sdk/capnp'))
 sys.path.append('/opt/vilota/messages')
 import capnp
 capnp.add_import_hook()
