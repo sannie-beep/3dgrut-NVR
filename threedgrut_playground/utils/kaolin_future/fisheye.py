@@ -281,8 +281,8 @@ def estimate_theta_star(
 
     # ru: (...), need to find theta_star for each ru
     # Use torch.searchsorted (PyTorch >= 1.6)
-    #ru_clamped = torch.clamp(ru, R[0], R[-1])
-    idx = torch.searchsorted(R, ru) - 1
+    ru_clamped = torch.clamp(ru, R[0], R[-1])
+    idx = torch.searchsorted(R, ru_clamped) - 1
     idx = torch.clamp(idx, 0, len(R) - 2)
 
     r0 = R[idx]
@@ -290,7 +290,7 @@ def estimate_theta_star(
     theta0 = theta_vals[idx]
     theta1 = theta_vals[idx + 1]
 
-    theta_star = theta0 + (ru - r0) * (theta1 - theta0) / (r1 - r0 + 1e-12) #interpolate to get the theta in between by that ratio
+    theta_star = theta0 + (ru_clamped - r0) * (theta1 - theta0) / (r1 - r0 + 1e-12) #interpolate to get the theta in between by that ratio
 
     return theta_star
 
