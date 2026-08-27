@@ -399,3 +399,11 @@ this orbit.
 - Keep run outputs under distinct names. Never overwrite a passing dataset.
 - Distinguish "self-consistent round trip" from "faithful simulation" in all
   claims. Bug 1 makes several results the former only.
+
+## 2026-08-27
+- Extrinsics VERIFIED correct (rot <0.04 deg, trans ~0.5%). The F-conjugation
+  prediction failed - retracted. Evidence in ~/vilota_results/calib_tag030.json.
+- Board squares are 30cm, not 15: sx=1.410 is a HALF-extent. Solver tag size
+  is 0.30. Runs solved at 0.15 have correct intrinsics, half-scale poses.
+- Button relabelled to 30cm. Making it truly 15cm (halve extents) is a
+  deliberate follow-up - it invalidates all existing datasets.
