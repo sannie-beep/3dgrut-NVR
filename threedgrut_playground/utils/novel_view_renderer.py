@@ -508,8 +508,12 @@ class VilotaDevice:
         Returns:
             world_to_camd (np.ndarray): View matrix to origin camera
         """
+        # world_to_cami arrives in polyscope/OpenGL axes but the calibration
+        # extrinsic is in OpenCV axes: convert, compose, convert back so the
+        # returned origin view is in the same axes as the input.
+        F = np.diag([1.0, -1.0, -1.0, 1.0])
         cami_to_cam0 = self.extrinsics[cam_index]
-        world_to_camd = cami_to_cam0 @ world_to_cami
+        world_to_camd = F @ (cami_to_cam0 @ (F @ world_to_cami @ F)) @ F
 
         return world_to_camd
 
