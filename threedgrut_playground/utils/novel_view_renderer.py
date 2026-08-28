@@ -227,7 +227,8 @@ class NovelViewRenderer:
         """
 
         # If no cam_index is specified, assume the pose is for the origin camera.
-        if not cam_index:
+        # Only None means unspecified: index 0 (CamA) is a valid camera.
+        if cam_index is None:
             cam_index = self.get_origin_camera_index()
 
         #If is_6dof is not specified, pose is assumed to be a 4x4 view matrix
