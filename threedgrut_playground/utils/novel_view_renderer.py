@@ -655,9 +655,17 @@ class Loader:
         extrinsic_matrix = build_extrinsic_mat_from_rotation_translation(rotation_matrix, translation_vector)
         print(f"Extrinsic Matrix {cam_rig_index}:\n{extrinsic_matrix}")
 
+        # The calibration extrinsic is cam_i->origin in OpenCV axes, but the
+        # camera stores world->cam_i in polyscope/OpenGL axes. Convert so the
+        # loaded pose equals what move_rig_to_view produces for an identity
+        # origin pose; storing extrinsic_matrix raw left the rig flipped and
+        # inverted until the first rig move.
+        F = np.diag([1.0, -1.0, -1.0, 1.0])
+        initial_view_matrix = F @ np.linalg.inv(extrinsic_matrix) @ F
+
         # Convert to Distortion Camera object
         distortion_camera = Camera.from_args(
-            view_matrix = torch.tensor(extrinsic_matrix, dtype=torch.float64, device=device),
+            view_matrix = torch.tensor(initial_view_matrix, dtype=torch.float64, device=device),
             focal_x = f_x,
             focal_y = f_y,
             x0 = c_x,
