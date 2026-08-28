@@ -56,6 +56,11 @@ Real tag pitch 5.173 cm, spacing 0.3, family tag16h5.
   is the workaround.
 - ps_gui.py writes every export to mcap_outputs/long_final_path.mcap and
   overwrites it each render.
+- A 3x3 grid with ids 0..8 CANNOT be added to offline_tags_all.json: its
+  adjacencies (0-1, 1-2, 0-3, 3-6 ...) duplicate the 4x7 base and 3x1 grids,
+  so vk_camera_driver aborts at startup ("Duplicate adj ids found for multi
+  grid config") and the recorder writes an empty bag. boards.py grid_3x3
+  still renders that layout; a conflict-free order is [0,3,1,2,4,7,5,8,6].
 
 ## Do not break
 Default launch, with no PLAYGROUND_BOARDS, must give exactly one 4x7 board
