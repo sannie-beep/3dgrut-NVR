@@ -619,6 +619,9 @@ class Playground:
             if self.calibration_loaded:
                 if psim.TreeNode("Device loaded"):
                     psim.Text(self.novel_view_renderer.get_device_name_and_serial_no())
+                    _, self.flyto_relative = psim.Checkbox(
+                        "Fly to relative to current view",
+                        getattr(self, "flyto_relative", False))
                     for idx, (camera) in self.novel_view_renderer.get_all_cameras().items():
                         # Draw a button to select this camera
                         if psim.Button(f"Select {self.novel_view_renderer.get_cam_name_at_index(idx)}"):
@@ -1371,6 +1374,18 @@ class Playground:
             self.primitives.recompute_stacked_buffers()
         self.is_force_canvas_dirty = self.is_force_canvas_dirty or settings_changed
 
+    def _relative_fly_target(self, cam_index):
+        """Fly-to target if the rig origin sat at the current viewport.
+        Viewport and result are polyscope/OpenGL axes; the rig extrinsic
+        is OpenCV axes, hence the F flips. Does not move the rig."""
+        F = np.diag([1.0, -1.0, -1.0, 1.0])
+        V = np.array(ps.get_view_camera_parameters().get_view_mat(), dtype=float)
+        E = np.array(self.novel_view_renderer.v_device.extrinsics[cam_index], dtype=float)
+        view = F @ (np.linalg.inv(E) @ (F @ V @ F)) @ F
+        rot, t = view[:3, :3], view[:3, 3]
+        eye = -rot.T @ t
+        return eye, eye - rot[2, :], rot[1, :]
+
     def _draw_single_vk_cam(self, i, cam: DistortionCamera):
         view_params = polyscope_from_kaolin_camera(cam)
         eye = view_params.get_position()
@@ -1379,8 +1394,10 @@ class Playground:
         dist = cam.distortion_coefficients
         psim.PushItemWidth(200)
         if (psim.Button(f"Fly to")):
+            if getattr(self, "flyto_relative", False):
+                eye, target, up = self._relative_fly_target(i)
             ps.look_at_dir(eye, target, up, fly_to=True)
-        
+
         xi_alpha = "Not Fisheye"
         if cam.distortion_coefficients[5] != 0.0:
             xi = round(float(cam.distortion_coefficients[9]), 2)
