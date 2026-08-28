@@ -62,6 +62,16 @@ Real tag pitch 5.173 cm, spacing 0.3, family tag16h5.
   grid config") and the recorder writes an empty bag. boards.py grid_3x3
   still renders that layout; a conflict-free order is [0,3,1,2,4,7,5,8,6].
 
+## Board assembly limits
+- off15 never assembled because it was never in front of the camera, not distance: the orbit targets
+  grid_off14 (orbit_trajectory.py board_frame) with the eye 0-0.9 m in front of it (traj z -2.51..-1.64),
+  so the near board (z -1.2 v1, -2.0 v2) sat beside/behind the camera; seen only at the fisheye edge,
+  oblique (v1 CamD 8.4 s: 33x48 px cells, whites 154 vs 221) with 0 detections. Texture ids == config.
+- Measured: a 4x7 assembles down to 11 px tag side (far base board: p5 13.5, median 19 px at 2-2.9 m
+  from the camera, kb4 fx 395), from 1-2 visible tags, side ratio down to 0.26. Grid-0 strays are
+  off14's own corner tags (0,3,24,27), not off15. Rule: every board 0.5-4 m IN FRONT of the eye path
+  (15 cm tag >= 15 px), offset sideways so boards do not stack on the view line (v2: off14 hid base 0-6).
+
 ## Do not break
 Default launch, with no PLAYGROUND_BOARDS, must give exactly one 4x7 board
 and the working build-trajectory flow. That is the user's known-good path.
