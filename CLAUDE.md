@@ -1,409 +1,62 @@
-# Vilota 3DGRUT playground — synthetic camera calibration
+# vilota-ref playground
 
-## Goal
-Internship project. Render a known camera (Vilota VK180, four cameras) from a
-Gaussian splat scene, detect AprilTags in the render with Vilota's own
-detector, feed the detections to Vilota's calibration tool, and check that it
-returns the intrinsics the calibration file already holds. A written report
-for the team lead is a deliverable.
+Render AprilGrid boards through a real device calibration, detect them, and
+check vk_calibrate recovers the same camera.
 
-## Environment
-- Repo: `~/niel_gs/vilota-ref` (Vilota fork of NVIDIA 3DGRUT playground)
-- venv: `source ~/niel_gs/3dgrut/.venv/bin/activate`
-- Launch: `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia python playground.py --gs_object ply_files/room.ply`
-- Solver: `~/vk_src/vk_calibrate/build/vk_calibrate` (outside the repo)
-- Vilota runtime: `vk_camera_driver`, `vk_record`; capnp schemas in
-  `/opt/vilota/messages`; real detector configs in
-  `/opt/vilota/configs/camera_driver/`
-- Device serial used throughout: `DP180IP-2404-0004`
-- Backups (verify before trusting): `~/vilota_fixes.patch`,
-  `~/orbit_percam.py.bak`, `~/plot_real.json`, `~/plot_aa.json`
+## Rules
+- NEVER run a render or launch playground.py. The GPU is the user's.
+- NEVER run vk_calibrate.
+- Launch line, for reference only. Without the two NV variables polyscope
+  segfaults on Mesa:
+    PLAYGROUND_BOARDS=1 __NV_PRIME_RENDER_OFFLOAD=1 \
+      __GLX_VENDOR_LIBRARY_NAME=nvidia python playground.py \
+      --gs_object ply_files/room.ply
+- One change per commit, reason in the message.
+- After every edit run: python3 -m py_compile <each file touched>
+- Before claiming an edit applied, grep the file and show the new text.
+  Do not trust a patch script's own success message. This has already
+  produced silent no-ops twice.
+- Never guess an intrinsic value. Read it from the device file.
 
-## The camera file: `calibration_files/vk180.json`
-CamA/B/C are type 1, 1280x800, KB4, substantial barrel distortion:
-- cam0 fx 395.21 fy 394.92, k = [0.372647, 0.046181, -0.121431, 0.040402]
-- cam1 fx 396.92 fy 396.55, k = [0.354893, 0.079276, -0.148230, 0.048361]
-- cam2 fx 395.67 fy 395.06, k = [0.363951, 0.046050, -0.118613, 0.038761]
+## Calibration files, ./calibration_files/
+    DP180IP-30020104.json   30.02.0104          4 cams  <- the real Aug 17 unit
+    vk180.json              DP180IP-2404-0004   4 cams  <- every render so far
+    dp180_1.json            DP180-2501-0106     3 cams  <- only 3
+    dp180_2.json            DP180-2501-0109     4 cams
+    vkl.json                no deviceName       4 cams
+Filename and serial do not agree. Truth is the device file for the unit that
+made the data.
 
-CamD is type 0, 1920x1200, the fisheye, and the file describes it twice:
-- KB4 (`intrinsicMatrix` + `distortionCoeff[0:4]`): 614.846, 613.596,
-  939.427, 585.253, k = [-3e-05, 0.000252, 0.000714, -9.4e-05]
-- Double Sphere (`distortionCoeff[5:11]`): 431.2301, 430.4876, 939.6711,
-  585.3367, xi -0.3016, alpha 0.5530
+## The rig
+Six AprilGrid layouts sharing one tag pool, told apart by a hash of the
+layout, not by tag id:
+    3x1  ids 0 3 6            2x2  ids 0 2 4 6
+    4x7  ids 0..27            4x7  interleaved at offsets 14, 15, 16
+Real tag pitch 5.173 cm, spacing 0.3, family tag16h5.
 
-Both entries describe the same lens. The DS entry converts to a best-fit
-equidistant focal near 617.3, which is 0.4% from 614.85. Each ray generator
-reads the entry that matches its own model: KB4 reads
-`camera.get_camera_intrinsics()` plus `distortionCoeff[0:4]`, DS reads
-`distortionCoeff[5:11]`. This is correct, not an inconsistency.
+## Recent work, all in threedgrut_playground/
+- utils/boards.py is NEW. One material per board plus a logo, ids 0..6.
+  aprilgrid MUST stay first in BOARD_SPECS: a quad with no material_name
+  gets id 0, and that is the original single-board behaviour.
+- Materials must have DENSE ids from 0. engine.py sorts by material_id and
+  indexes positionally, and ps_gui.py:1377 maps id to dict POSITION. A gap
+  or a duplicate entry makes the material dropdown select the wrong thing.
+- ps_gui.py: Translate/Rotate/Scale sliders restored (they existed but sat
+  outside the function). Square size button fixed and generalised. Reset now
+  keeps translation and rotation. Calibration file dropdown added.
+- mesh_io.py zeroes material_assignments for every procedural mesh, so
+  add_primitive takes material_name to override it.
 
-## GUI traps (each one has cost a render)
-1. The board quad starts SQUARE. The size field shows 15.00 at startup, but
-   the quad keeps its own shape until you press
-   **Primitives → Quad 1 → Transform → Reset to 15cm square size**.
-   The texture is 752x440 (aspect 1.7091). On a square quad, tags render at
-   w/h near 0.585 and every calibration result is garbage (the fy/fx = 1.76
-   incident). Check by eye: the board must be visibly wider than tall.
-2. Do NOT use the **Square size (cm)** button. `calculate_sx_and_sy`
-   (`ps_gui.py` ~line 1300) swaps rows and columns, so it returns the exact
-   inverse of the correct sx/sy.
-3. The render dropdown defaults to Double Sphere. For a KB4 run, set it to
-   KB4 before pressing render.
-4. The GUI writes every export to `mcap_outputs/long_final_path.mcap`.
-   Rename it before the next render overwrites it.
-5. Ctrl+click **Frames Between** to type a value. Keep it at 1.
-6. "Not Fisheye" next to a Select button is **not** a bug and does not mean
-   the DS parameters failed to load. `_draw_single_vk_cam` is called only for
-   the SELECTED camera (`ps_gui.py` ~1465: the `if psim.Button(...)` fires
-   only on the click frame, the `elif self.selected_camera_idx == idx` covers
-   the rest). Unselected cameras draw a bare button with no text at all, and
-   `psim.SameLine()` puts the selected camera's text on its own button's row.
-   `selected_camera_idx` defaults to 0, so at startup the only text on screen
-   is CamA's — and "Not Fisheye" is correct for CamA, whose DS slot is zeros.
-   Verified by loading `VilotaDevice` directly: CamD is idx 3 with
-   `distortionCoeff[5] = 431.2301`, so its condition is True and it reads
-   "xi: -0.3, alpha: 0.55" once actually selected.
-   Treat "Not Fisheye" at startup as the visible tell that **CamA is
-   selected** — the state that silently downgraded every DS render (bug 6).
+## Known bugs, still open
+- calculate_sx_and_sy had rows/cols swapped AND the call site swapped them
+  back. Fixed, but check nothing else calls it.
+- move_rig_to_pose tests `if not cam_index`, so camera 0 silently becomes
+  the origin camera.
+- The MCAP writer sets encoding, step and frameId wrongly. fix_mcap_labels.py
+  is the workaround.
+- ps_gui.py writes every export to mcap_outputs/long_final_path.mcap and
+  overwrites it each render.
 
-## Known code bugs
-
-### 1. `fisheye.py` `theta_star = ru` debug override — FIXED 2026-08-26 (60bcdf5)
-```python
-theta_star = estimate_theta_star(k1, k2, k3, k4, ru=ru, ...)
-theta_star = ru   # debug override, discarded the correction
-```
-Made every KB4 render equidistant. Removed. Ray-level check after the fix:
-CamA half-width now solves to 1.14538 rad (131.2 deg across), matching the
-file's coefficients; the equidistant render was 1.6194 rad (185.6 deg), about
-55 deg too wide. CamD half-width 1.54878 vs 1.5614 equidistant. Emitted ray
-angles agree with a bisection inverse of the KB4 polynomial to ~1e-7 rad.
-
-Removing this alone would NOT have been correct — see bug 4, which it masked.
-
-### 2. `threedgrut_playground/ps_gui.py` lines ~1465-1472
-`cam_names.index(cam_name)` selects the extrinsics, so `cam_names` must keep
-all four names. Subset renders with `only_cams` instead. Now `None` (all
-four). Never trim `cam_names` itself.
-
-### 3. `calculate_sx_and_sy` rows/cols swap (GUI trap 2 above).
-
-### 4. `estimate_theta_star` inverted the wrong polynomial — FIXED 2026-08-26 (87bae80)
-```python
-d = lambda theta: theta + k1 * theta**2 + ...   # was
-d = lambda theta: theta + k1 * theta**3 + ...   # is
-```
-KB4 uses odd powers 3, 5, 7, 9. Terms k2/k3/k4 were right; the k1 term had
-exponent 2. Round-trip error (theta -> ru via true KB4 -> estimate_theta_star
--> theta), before -> after:
-
-| cam | before | after |
-|---|---|---|
-| CamA | 1.07e-01 rad (42.3 px) | 1.7e-07 rad |
-| CamB | 9.46e-02 rad (37.6 px) | 1.9e-07 rad |
-| CamC | 1.11e-01 rad (43.8 px) | 1.6e-07 rad |
-| CamD | 7.39e-05 rad (0.05 px)  | 2.1e-08 rad |
-
-**Bug 1 masked bug 4.** The override threw away `estimate_theta_star`'s
-return value, so the typo never reached a render and no result on this page
-could have exposed it. Anyone who had deleted the override without reading
-the polynomial would have traded a 36 deg corner error on CamA for a 42 px
-one, and the residual would have looked plausible: the error is NOT monotonic
-in radius — it peaks near 22 px around 37 deg, crosses zero near 58 deg, then
-climbs to 99 px at the corner. Fix both or neither.
-
-CamD's k1 is -3e-05, so CamD alone would never have shown this. CamA/B/C
-k1 ~ 0.36 is where it bites. Another reason not to validate on CamD only.
-
-Verified by `tests/test_estimate_theta_star.py` (round trip, search-range
-units, past-lens-limit behaviour). Its section 2 is a regression guard: it
-feeds ru built from the OLD theta^2 polynomial, so a near-zero error there
-means the typo is back.
-
-### 5. LUT extrapolates past its end; no eps on the ru divide — OPEN
-`estimate_theta_star` clamps `idx` but not the interpolation, so ru beyond
-`R[-1]` is linearly extrapolated off the table (ru = 1.5x R[-1] -> 189 deg,
-10x -> 348 deg). Negative ru extrapolates below zero the same way.
-`generate_rays_kb4` divides by ru (`m_x / ru`) with no eps, so a pixel exactly
-on the principal point gives NaN, and its docstring promises an
-`out_of_fov_mask` it does not return. Latent, not active: max in-frame ru is
-1.91 (CamA corner) against R[-1] ~ 866. CamD's polynomial does turn over at
-theta 2.868 rad, past its 1.81 rad corner, so the table is only valid below
-that. Deferred to a third commit.
-
-### 6. Distortion indexed by the GUI selection, not the camera — FIXED (ps_gui.py:529)
-`add_cam_to_vid_recorder(self, index)` took intrinsics from `index` but
-distortion from `self.selected_camera_idx`:
-```python
-distortion_coefficients=self.distortions[self.selected_camera_idx] ...  # was
-distortion_coefficients=self.distortions[index] ...                     # is
-```
-Every multi-camera export therefore paired each camera's own intrinsics with
-whatever camera the GUI happened to have selected — by default index 0, CamA.
-A four-camera render would have given all four CamA's k. Found because the
-headless driver leaves `selected_camera_idx` as None, which turned the silent
-wrong-coefficient path into `ValueError: Camera must have distortion
-coefficients for rendering`. In the GUI it would never have raised.
-
-This is a third way a CamD-only result could look fine while the rig was
-wrong, so keep the pre-flight check in the driver: it asserts every camera's
-fx and k[0:4] against `vk180.json` before a frame is rendered.
-
-The MCAP export path no longer reads `selected_camera_idx`. The LIVE canvas
-preview still does (`ps_gui.py:208`, `update_render_view_viz`), which is
-correct — it previews the selected camera. So clicking Select CamD still
-changes what you see on screen; it no longer changes what gets exported.
-
-### Search range units — checked, not a bug
-The live code builds `linspace(0, pi, steps=int(pi/step_size))`: 0..pi rad,
-correct. The commented `theta_range = (0.0, 180.0)` at line 266 is dead and
-never read. Do not wire it in — as radians it would span 10313 deg. Note
-`step_size` sets the node COUNT, not the spacing; actual spacing is 0.001001
-rad, about 0.395 px at CamA fx.
-
-## Results
-
-### Four-camera KB4 render → KB4 fit, 2026-08-26 — PASS, distortion validated
-Post-fix (87bae80 + 60bcdf5 + the ps_gui.py:529 fix). Dataset
-`mcap_outputs/orbit_4cam_kb4fix.mcap`, tags `orbit_4cam_kb4fix_tags.mcap`.
-Per-camera orbit, 1296 poses, 1295 frames per camera, 71378 detections.
-
-`success = true` for all four cameras. 0 of 621/949/953/1221 poses rejected.
-Mean reprojection 0.414 px (cama 0.409, camb 0.419, camc 0.418, camd 0.410).
-
-| cam | fx err | fy err | cx err | cy err | fov gate |
-|---|---|---|---|---|---|
-| CamA | +0.043% | +0.014% | -0.493 | -0.809 | 146 >= 130 |
-| CamB | +0.001% | -0.033% | -0.452 | -0.457 | 142 >= 129 |
-| CamC | -0.004% | -0.037% | -0.538 | -0.489 | 146 >= 130 |
-| CamD | -0.020% | -0.047% | -0.485 | -0.467 | 202 >= 184 |
-
-**Distortion now matches the file — this is the result bug 1 was hiding.**
-
-| cam | k1 | k2 | k3 | k4 |
-|---|---|---|---|---|
-| CamA | -0.15% | +1.64% | +0.77% | +0.65% |
-| CamB | -0.14% | -0.11% | -0.36% | -0.70% |
-| CamC | -0.17% | +1.40% | +0.32% | +0.00% |
-| CamD | (see below) | -12.6% | +0.81% | +2.46% |
-
-CamA k1 recovers 0.3721 against the file's 0.372647. Pre-fix the same camera
-returned -1.8e-4. CamD's k1 is -3.03e-05 in the file and +2.19e-05 recovered:
-a sign flip on a number that is essentially zero, so the relative error is
-meaningless — CamD is nearly equidistant and k3 (0.81%) is its dominant term.
-
-This is the first run that validates the distortion path. Combined with the
-earlier focal/principal-point/geometry/detector/solver evidence, the KB4
-synthetic loop is now end-to-end.
-
-The cx/cy offsets are the known half-pixel convention effect, unchanged.
-
-#### Board coverage, per-camera orbit
-| cam | frames | zero-tag | zero % | detections | mean/frame | >=12 tags |
-|---|---|---|---|---|---|---|
-| cama | 1265 | 513 | 40.6% | 9013 | 7.12 | 26.6% |
-| camb | 1265 | 209 | 16.5% | 17316 | 13.69 | 58.5% |
-| camc | 1265 | 211 | 16.7% | 17477 | 13.82 | 58.8% |
-| camd | 1266 | 19 | 1.5% | 27572 | 21.78 | 93.3% |
-
-CamA is the weak one at 40.6% zero-tag; CamB/CamC are fine at ~16.5%. It
-still converged, but CamA has the fewest retained poses (621 vs 949/953/1221)
-and the largest fx error. If CamA needs tightening, aim its grid, not the
-whole orbit.
-
-### KB4 render → KB4 fit, CamD only, 2026-08-26 — PASS, but SUPERSEDED
-**Obtained with the bug 1 override ACTIVE (pre-60bcdf5), so the render was
-equidistant. The recovered k are not comparable to any post-fix run — do not
-diff them against a new result, and do not treat the k mismatch below as an
-open question. Re-run this before it goes in the report.** The focal,
-principal point, geometry, detector and solver conclusions still stand.
-
-614.752 613.337 938.953 584.772
-k = -2.03e-04 2.11e-04 -9.43e-05 1.36e-05
-success = true, fov 206.00 >= 187, calibrated_r 1105.0 px (ratio 0.976)
-0 of 1222 poses rejected, ~0.47 px reprojection
-
-Focal error 0.015%. First `success = true` of the project. The wide-diversity
-orbit moved `calibrated_r` from 996.2 (stuck across nine configurations) to
-1105.0. The recovered k do NOT match the file (k3 off by 10x, sign flip),
-which is exactly what bug 1 predicts: the render was equidistant, and a KB4
-fit of an equidistant image is exact at k = 0. So this validated geometry,
-detector, solver, and focal/principal-point recovery, and nothing about the
-distortion path. Not end-to-end validation. The post-fix re-run is the one
-that tests distortion.
-
-### Double Sphere, CamD, correct render, 2026-08-26 — PASS. No degeneracy.
-Dataset `mcap_outputs/orbit_ds_fix.mcap` (1295 frames, CamD only, dropdown on
-Double Sphere Fisheye, Select CamD clicked first), tags
-`orbit_ds_fix_tags.mcap`. `--cam-types ds --focal-lengths 431 --tag-size 0.15`.
-
-`success = true`, fov gate **202 >= 186 PASSES**, calibrated_r 1093.0 px
-(ratio 0.965), 0 of 1221 poses rejected, mean reprojection **0.406 px**.
-
-| param | truth | recovered | err |
-|---|---|---|---|
-| fx | 431.2301 | 431.176 | **-0.013%** |
-| fy | 430.4876 | 430.328 | -0.037% |
-| cx | 939.6711 | 939.200 | -0.471 px |
-| cy | 585.3367 | 584.853 | -0.484 px |
-| xi | -0.3016 | -0.301522 | 0.026% |
-| alpha | 0.5530 | 0.553021 | 0.004% |
-
-**The 3.4% "bias" was entirely the bad render. It is now 0.013%.** xi and
-alpha both land within 0.03%, so they did not trade against focal length.
-There is no Double Sphere degeneracy in this setup, single board and all.
-cx/cy carry the usual half-pixel offset, unchanged.
-
-#### Branch confirmation
-Fitting the SAME detections with kb4 must show the DS signature. Predicted
-from the code before this render, vs measured:
-
-| | predicted (true DS) | measured | old tags_extreme |
-|---|---|---|---|
-| f | 617.328 | 617.189 | 614.820 |
-| k1 | -1.598e-02 | **-1.591e-02** | -2.82e-04 |
-| k2 | 1.531e-02 | 1.514e-02 | 2.68e-04 |
-| k3 | -4.046e-03 | -3.934e-03 | -1.07e-04 |
-| k4 | 3.067e-04 | 2.811e-04 | 1.30e-05 |
-
-Measured/predicted k1 ratio 0.995, and k1 is 56.5x larger than the retracted
-run's. This render took the DS branch; `tags_extreme` did not. That closes the
-retraction: the old DS numbers were an equidistant render, this one is real.
-
-`generate_fisheye_rays_double_sphere` is now validated by a render, not just
-by the unit-test inverse check.
-
-### Real-device control
-`real_device.mcap`, 674 frames. DS single-camera step 0 lands 0.48% off, and
-the full run reproduces the device file to 0.03% (432.19 vs 432.07). This is
-a device recording, so it never touched the playground renderer and none of
-bugs 1/4/6 apply. It validates the solver's DS path. It says nothing about
-the renderer's DS path, which remains untested.
-
-### CamA/B/C synthetic (four-camera bundle)
-SUPERSEDED — pre-60bcdf5, equidistant render. Focal correct (395.27 vs
-395.21), k1 near -1.8e-4 vs the file's 0.3726. That was bug 1, not the
-solver, and CamA is where bug 4 would have bitten hardest too (42 px).
-Re-run after re-rendering. Single-vs-multi camera was tested and is NOT
-the cause of the DS bias. Coverage note: the CamD-aimed orbit leaves CamA/B
-with ~45% zero-tag frames; a four-camera run needs the per-camera trajectory
-(`~/orbit_percam.py.bak`).
-
-### Constant half-pixel principal point offset — explained, harmless
-The playground casts rays at pixel centers; AprilTag reports corners half a
-pixel away. Absorbed into cx/cy (~0.47 px low both axes). Report it, do not
-chase it.
-
-## Working pipeline (after a render exits)
-```bash
-mv mcap_outputs/long_final_path.mcap mcap_outputs/<name>.mcap
-python fix_mcap_labels.py mcap_outputs/<name>.mcap <name>_img.mcap \
-  --topics S1/camd --serial DP180IP-2404-0004
-TOPIC="S1/camd/tags:queued" ./run_offline_tags.sh <name>_img.mcap <name>_tags.mcap
-~/vk_src/vk_calibrate/build/vk_calibrate --vbag-path <name>_tags.mcap \
-  --cam-types kb4 --focal-lengths 616 --tag-size 0.15
-```
-- `fix_mcap_labels.py` fixes two labels only: channel encoding (image/jpeg →
-  capnp Image) and the zero `step` field. Pixels are untouched yuv420.
-- `run_offline_tags.sh` chains vk_camera_driver playback + vk_record, config
-  `offline_tags_camd.json` (tag16h5, black_border 2, 7x4).
-- Config `size` is 0.05173 but the rendered tags are 0.15 m. That scales
-  translations, not intrinsics. `--tag-size 0.15` on the solver is what
-  matters.
-- Useful solver flags: `--cam-types kb4 kb4 kb4 ds`, `-n "cama" "camb" ...`
-  to exclude cameras, `--bypass-dataset-check`.
-- The Streamlit UI's Monocular Fisheye preset produces `--cam-types ds` for
-  CamD, never kb4. Monocular Pinhole untested. Call the binary directly.
-- `measure_tags.py <png> --show out.png` measures tag squareness on frames
-  in `ecal_pub_sub/CamD/`.
-- `python tests/test_estimate_theta_star.py` — KB4 inverse round trip. No GPU,
-  no render, ~1 s. Run it after any edit to `fisheye.py`.
-- Four-camera pipeline (topics and config differ from the CamD-only one):
-```bash
-python fix_mcap_labels.py mcap_outputs/<name>.mcap <name>_img.mcap \
-  --topics S1/cama S1/camb S1/camc S1/camd --serial DP180IP-2404-0004
-CONFIG=offline_tags_all.json \
-TOPIC="S1/cama/tags:queued S1/camb/tags:queued S1/camc/tags:queued S1/camd/tags:queued" \
-  ./run_offline_tags.sh <name>_img.mcap <name>_tags.mcap
-~/vk_src/vk_calibrate/build/vk_calibrate --vbag-path <name>_tags.mcap \
-  --cam-types kb4 kb4 kb4 kb4 \
-  --focal-lengths 395.21 396.92 395.67 614.85 --tag-size 0.15
-```
-  `offline_tags_all.json` is the four-camera detector config; the CamD-only
-  `offline_tags_camd.json` silently yields one topic. Timings on this box:
-  render 4x1295 frames ~11 min (KB4 cams ~13 it/s, CamD ~5 it/s), relabel 34 s,
-  detection ~1 min, solve ~2 s. MCAP is ~3.4 GB (chunk-compressed).
-
-## Multi-board blueprint (NOT needed — kept for reference only)
-This was built to break a Double Sphere degeneracy that does not exist. With a
-correct render, single-board DS recovers fx to 0.013% and xi to 0.026%. Do not
-spend time here unless some future result actually calls for multiple boards.
-
-The real rig config `/opt/vilota/configs/camera_driver/vk180_calibration.json`
-declares six grids: 1x3, 2x2, and four 7x4 boards with start_ids [0],
-[0,14], [0,15], [0,16]. `generateGrid` expands multi-element start_ids
-round-robin by increment ([0,14] → 0,14,1,15,...), which is how boards share
-the tag family yet hash to distinct grid IDs. Reproducing this needs:
-`create_aprilgrid.py` extended to accept a starting tag ID (currently it
-always draws 0-27), four+ quads at different depths, and matching
-`april_grids` entries in the detector config.
-
-## Open work, in order
-1. DONE 2026-08-26. `estimate_theta_star` verified, typo fixed (87bae80),
-   override removed (60bcdf5), distortion indexing fixed (ps_gui.py:529),
-   four-camera KB4 re-render and re-fit PASS with k matching the file.
-   Every render before 60bcdf5 is equidistant — regenerate, never reuse.
-   Still open: the bug 5 clamp/eps commit.
-2. DONE 2026-08-26. Double Sphere re-measured with a correct render: 0.013%
-   on fx, fov gate passes, no degeneracy. Multi-board scene not needed.
-3. The report. Both camera models now pass on correct renders, so the story is
-   no longer "kb4 passes, ds fails" — it is "three renderer bugs made ds look
-   like it failed". Ingredients on disk: the real-device control; the
-   four-camera KB4 run (focal 0.05%, k within 1.6%); the CamD DS run (fx
-   0.013%, xi 0.026%); the KB4-cross-check table that proves which ray branch
-   each render took; bugs 1/4/6 with before-and-after numbers; the GUI traps.
-   The retracted 3.4% belongs in the report as a worked example of a
-   self-consistent result that was not a faithful simulation.
-   Still open: the bug 5 clamp/eps commit. radtan8 was never re-tested after
-   the fixes — its recorded failure is not trustworthy either.
-
-## Rendering without the GUI
-`ps_gui.py` drives everything from imgui buttons, so a scripted run has to call
-the same methods in the same order. Working driver: `drive_render.py` in the repo root. Sequence:
-`Playground(...)` -> `novel_view_renderer.load_device()` -> quad
-`transform.reset(); sx=1.410; sy=0.825` -> `engine.camera_type = 'KB4'` ->
-`video_recorder.frames_between_cameras = 1` -> `build_orbit_trajectory(pg)` ->
-`pg.render_mcap_trajectory(poses)`. Needs `DISPLAY=:1` — polyscope still opens
-a real GL window; it just never needs a click. `render_mcap_trajectory` ends
-in `sys.exit()`.
-
-The driver asserts before rendering, which is what turns a 12-minute mistake
-into an instant one: quad wider than tall, override gone, `theta**3` present,
-`only_cams` None, and every camera's fx/k[0:4] against `vk180.json`.
-
-`threedgrut_playground/utils/orbit_trajectory.py` is byte-identical to
-`~/orbit_percam.py.bak` — the "Build Orbit Trajectory" button already builds
-the PER-CAMERA orbit (aim grids per camera type, 180 poses each for CamA/B/C
-and 756 for CamD), not the old CamD-aimed one. Coverage numbers above are for
-this orbit.
-
-## Conventions
-- **Never start a render. Renders are the user's to run.** If a step needs
-  one, list the GUI steps and stop. The user runs it and says when the MCAP
-  is written. Claude handles code, tests, the detector, the solver, and
-  analysis — not the render itself. `drive_render.py` documents the call
-  sequence and is useful for reading the settings off; do not execute it.
-- Never guess an intrinsic value. Read it from `vk180.json`.
-- Before every render check: quad sized (wider than tall), dropdown, and
-  `only_cams`. A wrong setting costs 12 minutes.
-- Keep run outputs under distinct names. Never overwrite a passing dataset.
-- Distinguish "self-consistent round trip" from "faithful simulation" in all
-  claims. Bug 1 makes several results the former only.
-
-## 2026-08-27
-- Extrinsics VERIFIED correct (rot <0.04 deg, trans ~0.5%). The F-conjugation
-  prediction failed - retracted. Evidence in ~/vilota_results/calib_tag030.json.
-- Board squares are 30cm, not 15: sx=1.410 is a HALF-extent. Solver tag size
-  is 0.30. Runs solved at 0.15 have correct intrinsics, half-scale poses.
-- Button relabelled to 30cm. Making it truly 15cm (halve extents) is a
-  deliberate follow-up - it invalidates all existing datasets.
+## Do not break
+Default launch, with no PLAYGROUND_BOARDS, must give exactly one 4x7 board
+and the working build-trajectory flow. That is the user's known-good path.
