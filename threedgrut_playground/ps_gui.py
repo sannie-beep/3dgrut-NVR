@@ -552,6 +552,26 @@ class Playground:
         if psim.TreeNode("Novel View from Vilota Calibration file"):
             #psim.Text("Place your calibration file into a folder called ./calibrations")
             
+            # CALIB DROPDOWN. Scanned once, refreshable. Each entry shows the
+            # deviceName inside the file, because the filename and the serial
+            # do not always agree: vk180.json holds DP180IP-2404-0004.
+            if not hasattr(self, "_calib_files"):
+                self._calib_files, self._calib_labels = self._scan_calibration_files()
+                cur = self.novel_view_renderer.calibration_filename
+                self._calib_idx = (self._calib_files.index(cur)
+                                   if cur in self._calib_files else 0)
+            if self._calib_files:
+                changed, self._calib_idx = psim.Combo(
+                    "Calibration file", self._calib_idx, self._calib_labels)
+                if changed:
+                    self.novel_view_renderer.calibration_filename = \
+                        self._calib_files[self._calib_idx]
+                psim.SameLine()
+                if psim.Button("Rescan"):
+                    del self._calib_files
+            else:
+                psim.Text("No .json files in ./calibration_files/")
+
             _, self.novel_view_renderer.calibration_filename = psim.InputText(
                 "Calibration Path (relative to root)",
                 self.novel_view_renderer.calibration_filename
@@ -1261,6 +1281,35 @@ class Playground:
 
         return is_retained, is_duplicated
 
+
+    def _scan_calibration_files(self):
+        """List .json files in ./calibration_files/ with their device name.
+
+        Returns (filenames, labels). A file without cameraData is marked, so
+        the dropdown never offers something the loader will reject.
+        """
+        import json
+        import os
+        folder = "./calibration_files/"
+        names, labels = [], []
+        try:
+            found = sorted(f for f in os.listdir(folder) if f.endswith(".json"))
+        except OSError:
+            return [], []
+        for fn in found:
+            try:
+                with open(os.path.join(folder, fn)) as fh:
+                    d = json.load(fh)
+                cams = len(d.get("cameraData", []))
+                dev = d.get("deviceName") or "no deviceName"
+                label = (f"{fn}  [{dev}, {cams} cams]" if cams
+                         else f"{fn}  [no cameraData]")
+            except Exception:
+                label = f"{fn}  [unreadable]"
+            names.append(fn)
+            labels.append(label)
+        return names, labels
+
     def _draw_transform_widget(self, obj):
 
         psim.SetNextItemOpen(True, psim.ImGuiCond_FirstUseEver)
@@ -1273,7 +1322,13 @@ class Playground:
             #     transform_changed = True
             # psim.PopItemWidth()
             if psim.Button("Reset to 30cm square size"):
+                # Change the size, keep the board where it is. reset() also
+                # zeroes translation and rotation, which loses the placement.
+                _t = (object_transform.tx, object_transform.ty, object_transform.tz)
+                _r = (object_transform.rx, object_transform.ry, object_transform.rz)
                 object_transform.reset()
+                object_transform.tx, object_transform.ty, object_transform.tz = _t
+                object_transform.rx, object_transform.ry, object_transform.rz = _r
                 object_transform.sx = 1.410
                 object_transform.sy = 0.825
                 transform_changed = True
@@ -1288,11 +1343,77 @@ class Playground:
                 format="%.2f"
             )
             psim.SameLine()
+            sized = self.size_any_object(obj, self.square_size)
             if psim.Button("Square size (cm)"):
-                sy, sx = self.calculate_sx_and_sy(self.square_size)
-                object_transform.sx = sx
-                object_transform.sy = sy
+                if sized is None:
+                    print("[playground] no texture on this object, cannot size it")
+                else:
+                    object_transform.sx, object_transform.sy = sized[0], sized[1]
+                    transform_changed = True
+            psim.SameLine()
+            psim.TextDisabled(sized[2] if sized else "no texture")
+
+            # SLIDERS RESTORED
+            psim.PushItemWidth(350)
+            changed, values = psim.SliderFloat3(
+                "Translate",
+                [object_transform.tx, object_transform.ty, object_transform.tz],
+                v_min=-15.0, v_max=15.0,
+                format="%.4f",
+            )
+            if changed:
+                object_transform.tx = values[0]
+                object_transform.ty = values[1]
+                object_transform.tz = values[2]
                 transform_changed = True
+
+            changed, values = psim.SliderFloat3(
+                "Rotate",
+                [object_transform.rx, object_transform.ry, object_transform.rz],
+                v_min=-180.0, v_max=180.0,
+                format="%.3f",
+            )
+            if changed:
+                object_transform.rx = values[0]
+                object_transform.ry = values[1]
+                object_transform.rz = values[2]
+                transform_changed = True
+
+            changed, values = psim.SliderFloat3(
+                "Scale",
+                [object_transform.sx, object_transform.sy, object_transform.sz],
+                v_min=-5.0, v_max=5.0,
+                format="%.4f",
+            )
+            if changed:
+                object_transform.sx = values[0]
+                object_transform.sy = values[1]
+                object_transform.sz = values[2]
+                transform_changed = True
+            psim.PopItemWidth()
+
+            # Type exact numbers. The sliders are for finding a position,
+            # these are for recording one.
+            psim.PushItemWidth(220)
+            _, tvals = psim.InputFloat3(
+                "Translate (exact)",
+                [object_transform.tx, object_transform.ty, object_transform.tz],
+                format="%.4f")
+            if psim.Button("Apply translate"):
+                object_transform.tx = tvals[0]
+                object_transform.ty = tvals[1]
+                object_transform.tz = tvals[2]
+                transform_changed = True
+            _, rvals = psim.InputFloat3(
+                "Rotate (exact)",
+                [object_transform.rx, object_transform.ry, object_transform.rz],
+                format="%.3f")
+            if psim.Button("Apply rotate"):
+                object_transform.rx = rvals[0]
+                object_transform.ry = rvals[1]
+                object_transform.rz = rvals[2]
+                transform_changed = True
+            psim.PopItemWidth()
 
             if transform_changed:
                 self.primitives.rebuild_bvh_if_needed(force=True, rebuild=False)
@@ -1300,53 +1421,65 @@ class Playground:
             
             psim.TreePop()
 
-    def calculate_sx_and_sy(self, square: float):
-            sx = (square * 4 + (square *0.3) * 5) * 0.01
-            sy = (square * 7 + (square *0.3) * 8) * 0.01
-            return sx, sy
+    def calculate_sx_and_sy(self, square: float, rows: int = 4, cols: int = 7):
+        """Half-extents for a rows x cols board. square is the tag pitch in cm.
+
+        The old version had rows and cols swapped and hardcoded 4 and 7. The
+        call site swapped them back, so the two faults cancelled for a 4x7
+        board and for nothing else. It also ignored the one-gap border that
+        add_padding draws.
+        """
+        return ((cols + 0.3 * (cols - 1) + 0.6) * square * 0.01 / 2.0,
+                (rows + 0.3 * (rows - 1) + 0.6) * square * 0.01 / 2.0)
+
+    def material_for(self, obj):
+        """Return (name, material) for the object, or (None, None)."""
+        try:
+            mat_id = obj.material_id[0].item()
+        except Exception:
+            return None, None
+        for name, mat in self.primitives.registered_materials.items():
+            if mat.material_id == mat_id:
+                return name, mat
+        return None, None
+
+    def board_shape_for(self, obj):
+        """ANY SHAPE. Return (rows, cols) if the material is a known board."""
+        name, _mat = self.material_for(obj)
+        if name is None:
+            return None
+        try:
+            from threedgrut_playground.utils.boards import BOARD_SPECS
+        except Exception:
+            return None
+        for spec_name, rows, cols, _ids in BOARD_SPECS:
+            if spec_name == name:
+                return rows, cols
+        return None
+
+    def texture_aspect_for(self, obj):
+        """Width over height of the object's diffuse map, or None."""
+        _name, mat = self.material_for(obj)
+        dm = getattr(mat, "diffuse_map", None) if mat is not None else None
+        if dm is None or dm.ndim < 2 or dm.shape[0] == 0:
+            return None
+        return float(dm.shape[1]) / float(dm.shape[0])
+
+    def size_any_object(self, obj, value_cm):
+        """Half-extents for any object. Returns (sx, sy, rule) or None."""
+        shape = self.board_shape_for(obj)
+        if shape is not None:
+            rows, cols = shape
+            sx, sy = self.calculate_sx_and_sy(value_cm, rows, cols)
+            return sx, sy, f"tag pitch, {rows}x{cols} board"
+        aspect = self.texture_aspect_for(obj)
+        if aspect is None:
+            return None
+        sx = value_cm * 0.01 / 2.0
+        return sx, sx / aspect, f"quad width, aspect {aspect:.3f}"
 
 
 
-            # psim.PushItemWidth(350)
-            # changed, values = psim.SliderFloat3(
-            #     "Translate",
-            #     [object_transform.tx, object_transform.ty, object_transform.tz],
-            #     v_min=-5.0, v_max=5.0,
-            #     format="%.4f",
-            #     
-            # )
-            # if changed:
-            #     object_transform.tx = values[0]
-            #     object_transform.ty = values[1]
-            #     object_transform.tz = values[2]
-            #     transform_changed = True
-
-            # changed, values = psim.SliderFloat3(
-            #     "Rotate",
-            #     [object_transform.rx, object_transform.ry, object_transform.rz],
-            #     v_min=-180.0, v_max=180.0,
-            #     format="%.3f",
-            #     
-            # )
-            # if changed:
-            #     object_transform.rx = values[0]
-            #     object_transform.ry = values[1]
-            #     object_transform.rz = values[2]
-            #     transform_changed = True
-
-            # changed, values = psim.SliderFloat3(
-            #     "Scale",
-            #     [object_transform.sx, object_transform.sy, object_transform.sz],
-            #     v_min=-5.0, v_max=5.0,
-            #     format="%.4f",
-            #     
-            # )
-            # if changed:
-            #     object_transform.sx = values[0]
-            #     object_transform.sy = values[1]
-            #     object_transform.sz = values[2]
-            #     transform_changed = True
-            # psim.PopItemWidth()
             
 
     def _draw_diffuse_pbr_settings_widget(self, obj):
