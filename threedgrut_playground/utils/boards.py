@@ -36,6 +36,7 @@ BOARD_SPECS = [
     ("grid_off14", 4, 7, TAG_ORDERS["off14"]),
     ("grid_off15", 4, 7, TAG_ORDERS["off15"]),
     ("grid_off16", 4, 7, TAG_ORDERS["off16"]),
+    ("grid_3x3",   3, 3, list(range(9))),
 ]
 
 
@@ -172,6 +173,10 @@ def spawn_scene(engine, primitive_type, device):
     import math
     import os
 
+    scene_file = os.environ.get("BOARD_SCENE")
+    if scene_file:
+        return spawn_from_file(engine, primitive_type, device, scene_file)
+
     want = os.environ.get("PLAYGROUND_BOARDS", "").strip()
     if want.lower() == "all":
         names = list(BOARD_NAMES)
@@ -228,3 +233,47 @@ def spawn_scene(engine, primitive_type, device):
         print(f"[playground]   {name:<12} d {dist:5.2f} m  {ang:+6.1f} deg  "
               f"({pos[0]:+.2f}, {pos[1]:+.2f}, {pos[2]:+.2f})"
               + (f"  sx {size[0]:.4f} sy {size[1]:.4f}" if size else "  (size by hand)"))
+
+
+def spawn_from_file(engine, primitive_type, device, path):
+    """Place boards from a JSON scene file. See office_scene.json.
+
+    Each entry: material (required), pos [x,y,z] (required), and either
+    tag_cm for a board or sx/sy for anything else. rot [rx,ry,rz] degrees
+    is optional and defaults to flat.
+    """
+    import json
+    spec = json.load(open(path))
+    boards = spec.get("boards", [])
+    print(f"[playground] scene file {path}, {len(boards)} board(s)")
+    for entry in boards:
+        name = entry["material"]
+        if name not in engine.primitives.registered_materials:
+            print(f"[playground]   skip {name}, no such material")
+            continue
+        before = set(engine.primitives.objects)
+        engine.primitives.add_primitive(
+            geometry_type="Quad", primitive_type=primitive_type,
+            device=device, material_name=name)
+        added = set(engine.primitives.objects) - before
+        if not added:
+            print(f"[playground]   {name} did not spawn")
+            continue
+        obj = engine.primitives.objects[added.pop()]
+
+        pos = entry["pos"]
+        obj.transform.tx, obj.transform.ty, obj.transform.tz = pos
+        rot = entry.get("rot", [0.0, 0.0, 0.0])
+        obj.transform.rx, obj.transform.ry, obj.transform.rz = rot
+
+        if "tag_cm" in entry:
+            size = board_half_extents(name, float(entry["tag_cm"]))
+        elif "sx" in entry:
+            size = (float(entry["sx"]), float(entry["sy"]))
+        else:
+            size = None
+        if size is not None:
+            obj.transform.sx, obj.transform.sy = size
+        print(f"[playground]   {name:<12} pos ({pos[0]:+.2f}, {pos[1]:+.2f}, "
+              f"{pos[2]:+.2f}) rot ({rot[0]:+.1f}, {rot[1]:+.1f}, {rot[2]:+.1f})"
+              + (f" sx {size[0]:.4f} sy {size[1]:.4f}" if size else ""))
