@@ -552,26 +552,6 @@ class Playground:
         if psim.TreeNode("Novel View from Vilota Calibration file"):
             #psim.Text("Place your calibration file into a folder called ./calibrations")
             
-            # CALIB DROPDOWN. Scanned once, refreshable. Each entry shows the
-            # deviceName inside the file, because the filename and the serial
-            # do not always agree: vk180.json holds DP180IP-2404-0004.
-            if not hasattr(self, "_calib_files"):
-                self._calib_files, self._calib_labels = self._scan_calibration_files()
-                cur = self.novel_view_renderer.calibration_filename
-                self._calib_idx = (self._calib_files.index(cur)
-                                   if cur in self._calib_files else 0)
-            if self._calib_files:
-                changed, self._calib_idx = psim.Combo(
-                    "Calibration file", self._calib_idx, self._calib_labels)
-                if changed:
-                    self.novel_view_renderer.calibration_filename = \
-                        self._calib_files[self._calib_idx]
-                psim.SameLine()
-                if psim.Button("Rescan"):
-                    del self._calib_files
-            else:
-                psim.Text("No .json files in ./calibration_files/")
-
             _, self.novel_view_renderer.calibration_filename = psim.InputText(
                 "Calibration Path (relative to root)",
                 self.novel_view_renderer.calibration_filename
@@ -639,9 +619,6 @@ class Playground:
             if self.calibration_loaded:
                 if psim.TreeNode("Device loaded"):
                     psim.Text(self.novel_view_renderer.get_device_name_and_serial_no())
-                    _, self.flyto_relative = psim.Checkbox(
-                        "Fly to relative to current view",
-                        getattr(self, "flyto_relative", False))
                     for idx, (camera) in self.novel_view_renderer.get_all_cameras().items():
                         # Draw a button to select this camera
                         if psim.Button(f"Select {self.novel_view_renderer.get_cam_name_at_index(idx)}"):
@@ -681,14 +658,6 @@ class Playground:
                             )
                             self._trajectory_status = f"Orbit built: {len(self.poses)} poses"
                             self.trajectory_loaded = True
-                            # Park the rig at the selected camera's first orbit
-                            # pose, so "Fly to" shows the render's first view
-                            # instead of the world origin.
-                            if self.poses:
-                                first = getattr(self, "orbit_first_pose", {}).get(
-                                    self.selected_camera_idx, 0)
-                                self._fly_to_pose(first, self.poses[first])
-                                self._trajectory_status += f", rig at pose {first}"
                         except Exception as e:
                             self._trajectory_status = f"Orbit failed: {e}"
                     psim.SameLine()
@@ -1289,35 +1258,6 @@ class Playground:
 
         return is_retained, is_duplicated
 
-
-    def _scan_calibration_files(self):
-        """List .json files in ./calibration_files/ with their device name.
-
-        Returns (filenames, labels). A file without cameraData is marked, so
-        the dropdown never offers something the loader will reject.
-        """
-        import json
-        import os
-        folder = "./calibration_files/"
-        names, labels = [], []
-        try:
-            found = sorted(f for f in os.listdir(folder) if f.endswith(".json"))
-        except OSError:
-            return [], []
-        for fn in found:
-            try:
-                with open(os.path.join(folder, fn)) as fh:
-                    d = json.load(fh)
-                cams = len(d.get("cameraData", []))
-                dev = d.get("deviceName") or "no deviceName"
-                label = (f"{fn}  [{dev}, {cams} cams]" if cams
-                         else f"{fn}  [no cameraData]")
-            except Exception:
-                label = f"{fn}  [unreadable]"
-            names.append(fn)
-            labels.append(label)
-        return names, labels
-
     def _draw_transform_widget(self, obj):
 
         psim.SetNextItemOpen(True, psim.ImGuiCond_FirstUseEver)
@@ -1330,13 +1270,7 @@ class Playground:
             #     transform_changed = True
             # psim.PopItemWidth()
             if psim.Button("Reset to 30cm square size"):
-                # Change the size, keep the board where it is. reset() also
-                # zeroes translation and rotation, which loses the placement.
-                _t = (object_transform.tx, object_transform.ty, object_transform.tz)
-                _r = (object_transform.rx, object_transform.ry, object_transform.rz)
                 object_transform.reset()
-                object_transform.tx, object_transform.ty, object_transform.tz = _t
-                object_transform.rx, object_transform.ry, object_transform.rz = _r
                 object_transform.sx = 1.410
                 object_transform.sy = 0.825
                 transform_changed = True
@@ -1515,35 +1449,16 @@ class Playground:
             self.primitives.recompute_stacked_buffers()
         self.is_force_canvas_dirty = self.is_force_canvas_dirty or settings_changed
 
-    def _relative_fly_target(self, cam_index):
-        """Fly-to target if the rig origin sat at the current viewport.
-        Viewport and result are polyscope/OpenGL axes; the rig extrinsic
-        is OpenCV axes, hence the F flips. Does not move the rig."""
-        F = np.diag([1.0, -1.0, -1.0, 1.0])
-        V = np.array(ps.get_view_camera_parameters().get_view_mat(), dtype=float)
-        E = np.array(self.novel_view_renderer.v_device.extrinsics[cam_index], dtype=float)
-        view = F @ (np.linalg.inv(E) @ (F @ V @ F)) @ F
-        rot, t = view[:3, :3], view[:3, 3]
-        eye = -rot.T @ t
-        # OpenCV +y points down, so the camera y axis is a DOWN vector.
-        # Polyscope wants UP. Negate it, or the preview shows the room
-        # inverted. This is preview only: the render builds its own
-        # matrices in novel_view_renderer and does not call look_at_dir.
-        return eye, eye - rot[2, :], -rot[1, :]
-
     def _draw_single_vk_cam(self, i, cam: DistortionCamera):
         view_params = polyscope_from_kaolin_camera(cam)
         eye = view_params.get_position()
         target = view_params.get_position() + view_params.get_look_dir() #TODO: print eye target and up
-        # OpenCV +y is DOWN, Polyscope wants UP. Preview only: the render builds its own matrices in novel_view_renderer.
-        up = -view_params.get_up_dir()
+        up = view_params.get_up_dir()
         dist = cam.distortion_coefficients
         psim.PushItemWidth(200)
         if (psim.Button(f"Fly to")):
-            if getattr(self, "flyto_relative", False):
-                eye, target, up = self._relative_fly_target(i)
             ps.look_at_dir(eye, target, up, fly_to=True)
-
+        
         xi_alpha = "Not Fisheye"
         if cam.distortion_coefficients[5] != 0.0:
             xi = round(float(cam.distortion_coefficients[9]), 2)
@@ -1564,27 +1479,20 @@ class Playground:
         psim.PopItemWidth()
     
     
-    def _fly_to_pose(self, i, pose):
-        """Move the rig to trajectory pose i and fly the viewport to the
-        selected camera's view of it. Shared by "Move to Pose" and the
-        automatic park after "Build Orbit Trajectory"."""
-        # All poses in file are from origin camera
-        self.selected_pose_idx = i
-        self.novel_view_renderer.move_rig_to_pose(pose)
-        cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
-        view_params = polyscope_from_kaolin_camera(cam)
-        eye = view_params.get_position()
-        target = view_params.get_position() + view_params.get_look_dir()
-        # OpenCV +y is DOWN, Polyscope wants UP. Preview only: the render builds its own matrices in novel_view_renderer.
-        up = -view_params.get_up_dir()
-        ps.look_at_dir(eye, target, up, fly_to=True)
-
     def _draw_cam_trajectory_view(self, poses_list):
         if poses_list is not None:
             for i in range(len(poses_list)):
                 pose = poses_list[i]
                 if psim.Button(f"Move to Pose {i}"):
-                    self._fly_to_pose(i, pose)
+                    # All poses in file are from origin camera
+                    self.selected_pose_idx = i
+                    self.novel_view_renderer.move_rig_to_pose(pose)
+                    cam = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
+                    view_params = polyscope_from_kaolin_camera(cam)
+                    eye = view_params.get_position()
+                    target = view_params.get_position() + view_params.get_look_dir()
+                    up = view_params.get_up_dir()
+                    ps.look_at_dir(eye, target, up, fly_to=True)
                 
                 
                 # if self.selected_pose_idx == i and psim.Button(f"Add to output trajectory"):
@@ -1600,8 +1508,7 @@ class Playground:
         view_params = polyscope_from_kaolin_camera(cam)
         eye = view_params.get_position()
         target = view_params.get_position() + view_params.get_look_dir()
-        # OpenCV +y is DOWN, Polyscope wants UP. Preview only: the render builds its own matrices in novel_view_renderer.
-        up = -view_params.get_up_dir()
+        up = view_params.get_up_dir()
         psim.PushItemWidth(200)
         if (psim.Button(f"View {i + 1}")):
             ps.look_at_dir(eye, target, up, fly_to=True)

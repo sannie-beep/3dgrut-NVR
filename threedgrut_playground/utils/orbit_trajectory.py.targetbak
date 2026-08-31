@@ -11,18 +11,12 @@ degree half field, so wide aims would only point them at nothing. The Double
 Sphere camera keeps the wide rectangular grid.
 """
 import math
-import os
 import numpy as np
 import polyscope as ps
 
 # Camera indices on the rig and which aim grid each uses.
-# ORBIT_CAMS: restrict the orbit to some cameras, e.g. ORBIT_CAMS=3 for
-# CamD only. Unset = all four. The render still writes all four topics; this
-# only chooses which cameras get poses aimed for them.
-_only = os.environ.get("ORBIT_CAMS")
-_sel = [int(x) for x in _only.split(",")] if _only else [0, 1, 2, 3]
-KB4_CAMS = [c for c in (0, 1, 2) if c in _sel]
-DS_CAMS = [c for c in (3,) if c in _sel]
+KB4_CAMS = [0, 1, 2]
+DS_CAMS = [3]
 
 # Viewpoints, shared by all cameras.
 ELEVATIONS = [-20.0, 20.0]
@@ -42,33 +36,11 @@ UP_AXIS = np.array([0.0, 1.0, 0.0])
 
 
 def board_frame(gui, name_hint="Quad"):
-    """Return the center, normal, width and key of the target primitive.
-
-    The single-board scene names its quad "Quad N". Scene-file boards are
-    named after their material. Match order: the caller's hint, then
-    ORBIT_TARGET from the environment, then grid_off14 (the mid board),
-    then aprilgrid. The old scene matches on the first try, so nothing
-    changes there.
-    """
-    import os
+    """Return the center, normal, width and key of the target primitive."""
     objs = gui.primitives.objects
-
-    def match(hint):
-        return next((k for k in objs if hint.lower() in k.lower()), None)
-
-    hints = [name_hint, os.environ.get("ORBIT_TARGET") or "",
-             "grid_off14", "aprilgrid"]
-    key = None
-    for hint in hints:
-        if hint:
-            key = match(hint)
-            if key is not None:
-                if hint != name_hint:
-                    print(f"[orbit] no '{name_hint}', aiming at '{key}'")
-                break
+    key = next((k for k in objs if name_hint.lower() in k.lower()), None)
     if key is None:
-        raise ValueError(f"No primitive matching any of {hints}. "
-                         f"Have: {list(objs)}")
+        raise ValueError(f"No primitive matching '{name_hint}'. Have: {list(objs)}")
 
     prim = objs[key].apply_transform()
     verts = prim.vertices.detach().cpu().numpy()
@@ -121,18 +93,7 @@ def eye_positions(center, normal, width):
     right, up = frame_from(fwd)
     eyes = []
     flip = False
-    # ORBIT_DIST: mean eye distance from the board in metres. Rescales the
-    # distance factors so their mean lands on that distance. Unset = old
-    # behaviour, which is a fraction of board width.
-    factors = list(DISTANCE_FACTORS)
-    dist_env = os.environ.get("ORBIT_DIST")
-    if dist_env:
-        d = float(dist_env)
-        mean_f = sum(DISTANCE_FACTORS) / len(DISTANCE_FACTORS)
-        factors = [f * d / (width * mean_f) for f in DISTANCE_FACTORS]
-        print(f"[orbit] ORBIT_DIST {d:.2f} m -> eye radii "
-              f"{[round(width * f, 2) for f in factors]} m")
-    for factor in factors:
+    for factor in DISTANCE_FACTORS:
         r = width * factor
         for el in ELEVATIONS:
             el_rad = math.radians(el)
@@ -149,22 +110,6 @@ def eye_positions(center, normal, width):
                 )
                 eyes.append(center + offset)
             flip = not flip
-
-    # ARM_REACH: the arm moves +-R metres in each cardinal direction from its
-    # start. Clamp every viewpoint into that box, centred on the sweep's own
-    # centroid, and leave the aims alone. Set ARM_REACH=0.5 to switch on.
-    reach = os.environ.get("ARM_REACH")
-    if reach:
-        r = float(reach)
-        arr = np.asarray(eyes)
-        home = arr.mean(axis=0)
-        clamped = np.clip(arr, home - r, home + r)
-        moved = np.linalg.norm(clamped - arr, axis=1)
-        print(f"[orbit] ARM_REACH {r:.2f} m box at "
-              f"({home[0]:+.2f}, {home[1]:+.2f}, {home[2]:+.2f})")
-        print(f"[orbit] {int((moved > 1e-6).sum())} of {len(arr)} viewpoints "
-              f"pulled in, max move {moved.max():.2f} m")
-        eyes = [row for row in clamped]
     return eyes
 
 
@@ -193,49 +138,19 @@ def make_pose(center, eye, yaw, pitch):
 def build_orbit_trajectory(gui, cam_index=None, name_hint="Quad", flip=False):
     """Fill the trajectory, serving every camera on the rig in turn."""
     center, normal, width, key = board_frame(gui, name_hint)
-    # The centre comes from board_frame's vertex mean. That is the DRAWN
-    # position: the quad's local vertices sit at z=2.5, so a board spawned
-    # at tz is drawn at tz + sz*2.5. Do not replace it with the transform.
-    # ORBIT_FLIP puts the camera BEHIND the board. The quad normal is local
-    # -z and the tracer does not cull back faces, so the tags render
-    # mirror-reversed and tag16h5 cannot decode them. Leave it unset.
-    if flip or os.environ.get("ORBIT_FLIP"):
-        print("[orbit] WARNING ORBIT_FLIP set: camera will be behind the "
-              "boards and tags will be mirrored")
+    if flip:
         normal = -normal
 
     nvr = gui.novel_view_renderer
     nvr.create_new_trajectory()
 
     eyes = eye_positions(center, normal, width)
-    ez = [float(e[2]) for e in eyes]
-    print(f"[orbit] eye z {min(ez):+.2f} .. {max(ez):+.2f}   board z {center[2]:+.2f}")
-    # AIM_SCALE: multiply every yaw and pitch. The stock grids assume an eye
-    # 0.5 m from the board. At 3 m the same swing throws the board to the
-    # fisheye edge where tags shrink below the detector floor. 0.5 is a good
-    # start at 3 m. Unset = 1.0 = old behaviour.
-    aim_scale = float(os.environ.get("AIM_SCALE", "1.0"))
-    # AIM_SCALE_KB4: the same multiplier for the KB4 cameras only. The KB4
-    # grid (45/28 deg) is narrower than the DS grid (78/49 deg), so the two
-    # camera types need different values. Falls back to AIM_SCALE.
-    aim_scale_kb4 = float(os.environ.get("AIM_SCALE_KB4", aim_scale))
-    def scaled(grid, s):
-        yaws, pitches = grid
-        return [y * s for y in yaws], [pt * s for pt in pitches]
-    if aim_scale != 1.0 or aim_scale_kb4 != 1.0:
-        print(f"[orbit] AIM_SCALE {aim_scale:.2f}, AIM_SCALE_KB4 {aim_scale_kb4:.2f}: "
-              f"DS yaw/pitch max {max(abs(a) for a in AIM_DS[0]) * aim_scale:.0f}/"
-              f"{max(abs(a) for a in AIM_DS[1]) * aim_scale:.0f} deg, "
-              f"KB4 yaw/pitch max {max(abs(a) for a in AIM_KB4[0]) * aim_scale_kb4:.0f}/"
-              f"{max(abs(a) for a in AIM_KB4[1]) * aim_scale_kb4:.0f} deg")
-    plan = [(c, aim_angles(*scaled(AIM_KB4, aim_scale_kb4))) for c in KB4_CAMS]
-    plan += [(c, aim_angles(*scaled(AIM_DS, aim_scale))) for c in DS_CAMS]
+    plan = [(c, aim_angles(*AIM_KB4)) for c in KB4_CAMS]
+    plan += [(c, aim_angles(*AIM_DS)) for c in DS_CAMS]
 
     poses = None
     per_cam = {}
-    first_pose = {}  # cam -> index of its first pose in the trajectory
     for cam, angles in plan:
-        first_pose[cam] = sum(per_cam.values())
         n_added = 0
         flip_seq = False
         for eye in eyes:
@@ -252,9 +167,7 @@ def build_orbit_trajectory(gui, cam_index=None, name_hint="Quad", flip=False):
         per_cam[cam] = n_added
 
     total = sum(per_cam.values())
-    # Lets the GUI park the rig at the first pose aimed for a given camera.
-    gui.orbit_first_pose = first_pose
     print(f"[orbit] target '{key}' center={center} width={width:.3f}m")
-    print(f"[orbit] {len(eyes)} viewpoints, per-camera poses: {per_cam}, first pose {first_pose}")
+    print(f"[orbit] {len(eyes)} viewpoints, per-camera poses: {per_cam}")
     print(f"[orbit] added {total} poses")
     return poses
