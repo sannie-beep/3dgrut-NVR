@@ -103,3 +103,7 @@ and the working build-trajectory flow. That is the user's known-good path.
   focal error. The multi-board scene exists for this reason.
 - Truth is the device file keyed by serial. Synthetic renders and the Aug 17
   real capture both use DP180IP-30020104.json, serial 30.02.0104.
+Extrinsics on the same v9 solve, relative to CamD: rotation error 0.049 / 0.024 /
+0.032 deg for CamA/B/C, position error 0.47 / 0.11 / 0.13 mm. Device file stores
+translation in CENTIMETRES and an empty rotationMatrix for the reference camera.
+Per-grid --tag-sizes confirmed correct: a wrong size would scale these baselines.
