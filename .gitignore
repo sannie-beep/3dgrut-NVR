@@ -50,3 +50,4 @@ calibration-*.json
 plot-*.json
 mcap_outputs/
 *.mcap
+__pycache__/
