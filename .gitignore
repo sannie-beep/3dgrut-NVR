@@ -51,3 +51,4 @@ plot-*.json
 mcap_outputs/
 *.mcap
 __pycache__/
+__pycache__/
