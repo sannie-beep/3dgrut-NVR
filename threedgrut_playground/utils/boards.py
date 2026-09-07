@@ -30,9 +30,12 @@ TAG_ORDERS = {
 }
 
 BOARD_SPECS = [
+    # aprilgrid MUST stay first: a quad added with no material_name gets
+    # material id 0 (mesh_io zeroes material_assignments), and the default
+    # no-PLAYGROUND_BOARDS launch must show the original single 4x7 board.
+    ("aprilgrid",  4, 7, TAG_ORDERS["base"]),   # the 4x7 base board
     ("grid_3x1",   3, 1, [0, 3, 6]),
     ("grid_2x2",   2, 2, [0, 2, 4, 6]),
-    ("aprilgrid",  4, 7, TAG_ORDERS["base"]),   # the 4x7 base board
     ("grid_off14", 4, 7, TAG_ORDERS["off14"]),
     ("grid_off15", 4, 7, TAG_ORDERS["off15"]),
     ("grid_off16", 4, 7, TAG_ORDERS["off16"]),
