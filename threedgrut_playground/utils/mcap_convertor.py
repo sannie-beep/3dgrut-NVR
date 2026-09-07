@@ -221,12 +221,15 @@ class RigCalibration:
 
 
 class McapConverter:
-    def __init__(self, calibration_file=None, fps=30.0,
+    def __init__(self, calibration_file=None, fps=None,
                  start_time_ns=DEFAULT_START_TIME_NS,
                  exposure_usec=DEFAULT_EXPOSURE_USEC, gain=DEFAULT_GAIN):
         self.output_filename = "output.mcap"
         self.output_folder = "./mcap_outputs/"
-        self.fps = fps
+        # PLAYGROUND_FPS keeps the export stamps in step with a trajectory
+        # generated at a non-default rate (vio_trajectory sets it).
+        self.fps = float(fps if fps is not None
+                         else os.environ.get("PLAYGROUND_FPS", 30.0))
         self.start_time_ns = int(start_time_ns)
         self.exposure_usec = int(exposure_usec)
         self.gain = int(gain)
@@ -462,7 +465,8 @@ def main():
     src.add_argument('--from-mcap', help='existing render bag to re-encode')
     src.add_argument('--from-dirs', help='folder with CamX/ PNG subfolders')
     ap.add_argument('--output', required=True)
-    ap.add_argument('--fps', type=float, default=30.0)
+    ap.add_argument('--fps', type=float, default=None,
+                    help='frame rate (default: PLAYGROUND_FPS env, else 30)')
     ap.add_argument('--start-time', type=float, default=1.0,
                     help='stamp of frame 0 in seconds (imu_list must lead it)')
     ap.add_argument('--cams', nargs='*',
