@@ -298,6 +298,12 @@ def make_pose(center, eye, yaw, pitch):
 
 def build_orbit_trajectory(gui, cam_index=None, name_hint="Quad", flip=False):
     """Fill the trajectory, serving every camera on the rig in turn."""
+    # VIO_TRAJ=1: build the smooth VIO path (vio_trajectory.py) from the
+    # same GUI button instead of the aim-sweep orbit.
+    if os.environ.get("VIO_TRAJ"):
+        from threedgrut_playground.utils.vio_trajectory import \
+            build_vio_trajectory
+        return build_vio_trajectory(gui, name_hint=name_hint, flip=flip)
     # ORBIT_TARGET keeps the old single-board orbit. The default frames the
     # combined bounding box of every board in the scene.
     corners, n_boards = None, 1
