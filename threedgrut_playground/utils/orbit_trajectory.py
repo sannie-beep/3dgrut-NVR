@@ -1,10 +1,16 @@
 """Build an orbit trajectory that serves every camera on the rig.
 
 Poses are grouped by camera. Each group is built in world space around the
-board, then stored through add_pose_to_trajectory with that camera's index,
+target, then stored through add_pose_to_trajectory with that camera's index,
 which converts the view into the rig frame. The named camera therefore sees
-the board exactly as aimed, and every camera gets direct coverage instead of
+the target exactly as aimed, and every camera gets direct coverage instead of
 whatever falls out of serving CamD alone.
+
+By default the target is ALL boards together: the combined bounding box of
+every board primitive in the scene, orbited about its centre at distances
+derived from the combined extent, pushed out (min_fit_radius) until every
+board corner stays inside a conservative KB4 field of view from every eye at
+zero aim. Set ORBIT_TARGET to orbit a single board the old way.
 
 Aim grids are per camera type. The KB4 cameras are 1280x800 with about a 58
 degree half field, so wide aims would only point them at nothing. The Double
@@ -39,6 +45,14 @@ MAX_AIM_ANGLE = 95.0
 
 # The scene up axis, from the Up setting in the Render widget (neg_y_up).
 UP_AXIS = np.array([0.0, 1.0, 0.0])
+
+# Combined-framing bounds, degrees. Conservative against the KB4 cameras of
+# DP180IP-30020104.json, where atan(half_sensor / f) gives half fields of
+# 58.0-58.5 (horizontal) and 45.1-45.6 (vertical) degrees - and the fisheye
+# only widens that. tests/test_orbit_framing.py re-derives the device bounds
+# from the file and asserts these sit below them.
+FIT_HALF_FOV_X_DEG = 55.0
+FIT_HALF_FOV_Y_DEG = 43.0
 
 
 def board_frame(gui, name_hint="Quad"):
@@ -89,6 +103,78 @@ def board_frame(gui, name_hint="Quad"):
     return center, normal, width, key
 
 
+def combined_board_frame(gui, name_hint="Quad"):
+    """Frame ALL boards: centre/normal/width of their combined bounding box.
+
+    Gathers every primitive named after a board material (or matching the
+    bare-quad hint), skipping the logo. Returns (center, normal, width,
+    label, corners, n_boards) with corners the 8 combined-AABB corners.
+    Falls back to board_frame when nothing matches.
+    """
+    from threedgrut_playground.utils.boards import BOARD_NAMES
+    objs = gui.primitives.objects
+    wanted = [n.lower() for n in BOARD_NAMES if n != "vilota_logo"]
+    wanted.append(name_hint.lower())
+    keys = [k for k in objs if any(k.lower().startswith(w) for w in wanted)]
+    if not keys:
+        center, normal, width, key = board_frame(gui, name_hint)
+        return center, normal, width, key, None, 1
+
+    all_verts, normals = [], []
+    for k in keys:
+        prim = objs[k].apply_transform()
+        all_verts.append(prim.vertices.detach().cpu().numpy())
+        if prim.vertex_normals is not None:
+            normals.append(
+                prim.vertex_normals.detach().cpu().numpy().mean(axis=0))
+    pts = np.concatenate(all_verts, axis=0)
+    mn, mx = pts.min(axis=0), pts.max(axis=0)
+    center = (mn + mx) / 2.0
+    width = float((mx - mn).max())
+    corners = np.array([[x, y, z] for x in (mn[0], mx[0])
+                        for y in (mn[1], mx[1]) for z in (mn[2], mx[2])])
+    normal = np.sum(normals, axis=0) if normals else np.array([0.0, 0.0, 1.0])
+    n = np.linalg.norm(normal)
+    normal = normal / n if n > 1e-9 else np.array([0.0, 0.0, 1.0])
+    return center, normal, width, f"{len(keys)} boards {keys}", corners, len(keys)
+
+
+def min_fit_radius(center, normal, corners, start, step=0.05, max_r=50.0):
+    """Smallest eye-ring radius from which every corner fits the FOV bounds.
+
+    Walks radii outward and, at each, rebuilds the actual elevation/azimuth
+    eye ring and checks every corner against FIT_HALF_FOV_X/Y at zero aim.
+    An on-axis formula is not enough: the +-20 degree elevation eyes see the
+    outer boards at larger vertical angles than an eye on the axis does.
+    """
+    tx = math.tan(math.radians(FIT_HALF_FOV_X_DEG))
+    ty = math.tan(math.radians(FIT_HALF_FOV_Y_DEG))
+    r = max(float(start), step)
+    while r < max_r:
+        if _ring_fits(center, normal, corners, r, tx, ty):
+            return r
+        r += step
+    return r
+
+
+def _ring_fits(center, normal, corners, r, tx, ty):
+    for eye in _eyes_for_radii(center, normal, [r]):
+        view = center - eye
+        d = np.linalg.norm(view)
+        if d < 1e-9:
+            return False
+        view = view / d
+        right, up = frame_from(view)
+        rel = corners - eye
+        fwd = rel @ view
+        if (fwd <= 1e-6).any():
+            return False
+        if (np.abs(rel @ right) > fwd * tx).any() \
+                or (np.abs(rel @ up) > fwd * ty).any():
+            return False
+    return True
+
+
 def frame_from(forward):
     """Return a right and up axis perpendicular to forward."""
     world_up = UP_AXIS
@@ -115,25 +201,13 @@ def aim_angles(yaws, pitches):
     return pairs
 
 
-def eye_positions(center, normal, width):
-    """Camera positions on a serpentine arc in front of the board."""
+def _eyes_for_radii(center, normal, radii):
+    """The serpentine elevation/azimuth eye ring at each radius, in order."""
     fwd = normal
     right, up = frame_from(fwd)
     eyes = []
     flip = False
-    # ORBIT_DIST: mean eye distance from the board in metres. Rescales the
-    # distance factors so their mean lands on that distance. Unset = old
-    # behaviour, which is a fraction of board width.
-    factors = list(DISTANCE_FACTORS)
-    dist_env = os.environ.get("ORBIT_DIST")
-    if dist_env:
-        d = float(dist_env)
-        mean_f = sum(DISTANCE_FACTORS) / len(DISTANCE_FACTORS)
-        factors = [f * d / (width * mean_f) for f in DISTANCE_FACTORS]
-        print(f"[orbit] ORBIT_DIST {d:.2f} m -> eye radii "
-              f"{[round(width * f, 2) for f in factors]} m")
-    for factor in factors:
-        r = width * factor
+    for r in radii:
         for el in ELEVATIONS:
             el_rad = math.radians(el)
             steps = list(range(AZIMUTH_STEPS))
@@ -149,6 +223,38 @@ def eye_positions(center, normal, width):
                 )
                 eyes.append(center + offset)
             flip = not flip
+    return eyes
+
+
+def eye_positions(center, normal, width, min_radius=None):
+    """Camera positions on a serpentine arc in front of the board(s)."""
+    # ORBIT_DIST: mean eye distance from the board in metres. Rescales the
+    # distance factors so their mean lands on that distance. Unset = old
+    # behaviour, which is a fraction of board width.
+    factors = list(DISTANCE_FACTORS)
+    dist_env = os.environ.get("ORBIT_DIST")
+    if dist_env:
+        d = float(dist_env)
+        mean_f = sum(DISTANCE_FACTORS) / len(DISTANCE_FACTORS)
+        factors = [f * d / (width * mean_f) for f in DISTANCE_FACTORS]
+        print(f"[orbit] ORBIT_DIST {d:.2f} m -> eye radii "
+              f"{[round(width * f, 2) for f in factors]} m")
+    radii = [width * f for f in factors]
+    if min_radius is not None:
+        if dist_env:
+            if min(radii) < min_radius:
+                print(f"[orbit] WARNING ORBIT_DIST rings "
+                      f"{[round(r, 2) for r in radii]} m sit inside the "
+                      f"{min_radius:.2f} m all-boards fit radius; outer "
+                      "boards will leave the KB4 field of view")
+        else:
+            pushed = [max(r, min_radius) for r in radii]
+            if pushed != radii:
+                print(f"[orbit] rings {[round(r, 2) for r in radii]} m -> "
+                      f"{[round(r, 2) for r in pushed]} m so every board "
+                      "fits the KB4 view from every eye")
+            radii = pushed
+    eyes = _eyes_for_radii(center, normal, radii)
 
     # ARM_REACH: the arm moves +-R metres in each cardinal direction from its
     # start. Clamp every viewpoint into that box, centred on the sweep's own
@@ -192,10 +298,17 @@ def make_pose(center, eye, yaw, pitch):
 
 def build_orbit_trajectory(gui, cam_index=None, name_hint="Quad", flip=False):
     """Fill the trajectory, serving every camera on the rig in turn."""
-    center, normal, width, key = board_frame(gui, name_hint)
-    # The centre comes from board_frame's vertex mean. That is the DRAWN
-    # position: the quad's local vertices sit at z=2.5, so a board spawned
-    # at tz is drawn at tz + sz*2.5. Do not replace it with the transform.
+    # ORBIT_TARGET keeps the old single-board orbit. The default frames the
+    # combined bounding box of every board in the scene.
+    corners, n_boards = None, 1
+    if os.environ.get("ORBIT_TARGET"):
+        center, normal, width, key = board_frame(gui, name_hint)
+    else:
+        center, normal, width, key, corners, n_boards = \
+            combined_board_frame(gui, name_hint)
+    # The centre comes from the DRAWN vertices (apply_transform): the quad's
+    # local vertices sit at z=2.5, so a board spawned at tz is drawn at
+    # tz + sz*2.5. Do not replace it with the transform.
     # ORBIT_FLIP puts the camera BEHIND the board. The quad normal is local
     # -z and the tracer does not cull back faces, so the tags render
     # mirror-reversed and tag16h5 cannot decode them. Leave it unset.
@@ -204,10 +317,17 @@ def build_orbit_trajectory(gui, cam_index=None, name_hint="Quad", flip=False):
               "boards and tags will be mirrored")
         normal = -normal
 
+    min_radius = None
+    if corners is not None and n_boards > 1:
+        min_radius = min_fit_radius(center, normal, corners,
+                                    start=width * min(DISTANCE_FACTORS))
+        print(f"[orbit] framing {n_boards} boards, fit radius "
+              f"{min_radius:.2f} m")
+
     nvr = gui.novel_view_renderer
     nvr.create_new_trajectory()
 
-    eyes = eye_positions(center, normal, width)
+    eyes = eye_positions(center, normal, width, min_radius)
     ez = [float(e[2]) for e in eyes]
     print(f"[orbit] eye z {min(ez):+.2f} .. {max(ez):+.2f}   board z {center[2]:+.2f}")
     # AIM_SCALE: multiply every yaw and pitch. The stock grids assume an eye
