@@ -477,6 +477,43 @@ Don't merge the image and tag MCAPs for viewing. Images use a zero-based clock, 
 | Baselines exactly half of truth | solved with `--tag-size 0.15` | re-solve with `0.30` — no re-render needed |
 | Disk full | image MCAPs are 1–11 GB each | delete old ones, keep the tag MCAPs |
 | Garbage result, fy/fx ≈ 1.76 | board not reset — 6 columns instead of 7 | GUI step 3, then re-render |
+| Only two grids detected out of three | one board is outside the sweep, or behind the eye box | Fly to after Build Orbit and look. Move the board so every eye is in front of it and it sits inside the camera's vertical field. |
+| Two detections in the whole bag, frames look clean, boards visible | **mirrored render**: the camera is behind the boards and sees the tags through them, reversed. tag16h5 cannot decode a mirror image. | never set `ORBIT_FLIP`. Check `eye z` in the orbit log is on the same side of the boards as the origin. |
+| Frames are a beige smear, `std` under 40 | the eye is inside the scene geometry | change `ORBIT_DIST` until Fly to shows the room |
+| Boards at the fisheye edge, few detections | `AIM_SCALE` too large for the distance | lower it. 0.9 for DS at 2.5 m is verified. |
+| Gate fails: `need increase data points diagonal` | aims do not reach the corners | raise `AIM_SCALE` (DS) or `AIM_SCALE_KB4` (KB4). The four `d_normalised_corners` must all drop under 0.05 for KB4, 0.06 for DS. |
+| Gate fails: `minimum bucket count ... 10 times lesser` | one image region never sees tags | a board is missing from that camera's view. For CamA check the near board is inside its 47° vertical field. |
+| CamA detects almost nothing on the near board | half the eyes are behind that board's plane | move it deeper than the eye box: `pos z -4.85` in v9 |
+| Board renders at double size | reset button pressed in three-grid mode | relaunch. The scene file sizes the boards. |
+| `Orbit failed: No primitive matching` | wrong `ORBIT_TARGET` or no boards spawned | check the `[playground]` startup lines |
+| Fly to shows the origin, not the boards | orbit not built yet | Build Orbit first; it parks the rig at the first pose |
+| Room upside down in Fly to | expected on older checkouts; fixed | the current branch negates the up vector in the preview. The render was never affected. |
+| Empty tags bag, 432 bytes | detector aborted at startup | a declared grid shares adjacency with another (a 3×3 with ids 0..8 collides with `aprilgrid`). Run the detector unfiltered and read its first lines. |
+| Focal 3.4 % off with `ds` | one board plane | three-grid mode, or fit KB4 |
+| Baselines off by a constant factor | wrong `--tag-sizes` | one value overrides every grid. Pass six, in grid order. Intrinsics are unaffected, so no re-render. |
+
+## How the detector sees tags
+
+Measured on this pipeline, CamD, tag16h5 with border 2, by shrinking frames from a working bag until detection failed:
+
+| tag side in the image | detection rate |
+|---|---|
+| 16 px | 50 % |
+| 25 px | 90 % |
+| 30 px | 95 %, plateau |
+
+Plan for **30 px**. The tag size needed at a given distance is $s = 30\,d / f$:
+
+| distance | CamD, $f = 615$ (1920 px) | CamA/B/C, $f = 393$ (1280 px) |
+|---|---|---|
+| 1 m | 4.9 cm | 7.6 cm |
+| 3 m | 14.6 cm | 22.8 cm |
+| 5 m | 24.4 cm | 38.0 cm |
+| 7 m | 34.1 cm | 53.2 cm |
+
+The detector runs on level 1 of an image pyramid (`apriltag.use_mipmap = 1`, input `camX_pyr`), so these are full-resolution numbers for a half-resolution detector. Turning the pyramid off did not change the result on a failing bag; the floor is about legibility, not resolution.
+
+This table is also the rig's requirement. A real monitor at 7 m needs tags of about 34 cm for CamD and 53 cm for the KB4 cameras, or those cameras never see it.
 
 ## Using a different device
 
@@ -506,11 +543,13 @@ Run the truth-print snippet from step 5 against your file and it prints the mode
 
 > ⚠️ **Only 4-camera rigs have been tested.** The dispatch and export code loop over cameras generically, so other counts may work, but nobody has tried.
 
-> ⚠️ **The walkthrough above uses the single AprilGrid quad (30 cm squares), and the step-5 numbers were measured on it.** The real device rig uses six boards at different depths with distinct `start_ids` — the playground can spawn those now, see [Multi-board scenes](#multi-board-scenes), with matching `april_grids` entries in the detector config.
+> ⚠️ **The walkthrough above uses the single AprilGrid quad (30 cm squares), and the step-5 numbers were measured on it.** The real device rig uses six boards at different depths with distinct `start_ids` — the playground can spawn those now, see [Multi-board walkthrough](#multi-board-walkthrough), with matching `april_grids` entries in the detector config.
 
-## Multi-board scenes
+## Multi-board walkthrough
 
-The real rig is six grids sharing one tag pool, told apart by layout, not by tag id. The playground can spawn them as separate quads, one material per board:
+The real rig is six grids sharing one tag pool, told apart by layout, not by tag id. The playground can spawn them as separate quads, one material per board, in two modes: the default respaced layout, or a scene JSON that places every board explicitly. The verified 31 Aug 2026 run below used the scene-JSON mode and predates the respacing — its positions belong to that mode only, not to the default layout.
+
+### The default layout
 
 ```bash
 
@@ -529,6 +568,87 @@ python playground.py --gs_object ply_files/room.ply
 The boards stack vertically 0.99 m apart — the height of a 4x7 board at 15 cm squares plus a 20% gap — so you can resize every board up to 15 cm squares in the GUI and they stay fully visible instead of the near board hiding the far ones. Setting `BOARD_ANGLES` restores the old angular layout, which does overlap at that size.
 
 **Build Orbit Trajectory** frames all boards together in this mode: it orbits the centre of their combined bounding box and pushes the near eye ring out until every board fits the KB4 field of view from every viewpoint. Set `ORBIT_TARGET=<board name>` to orbit a single board the old way; `ORBIT_DIST` and `ORBIT_FLIP` still work as before.
+
+### Scene-JSON mode
+
+The scene is a JSON file. `office_scene_v9.json` is the verified layout:
+
+```json
+{
+  "boards": [
+    {"material": "aprilgrid",  "tag_cm": 15.0, "pos": [0.0, -1.20, -4.85], "rot": [0, 0, 0]},
+    {"material": "grid_off14", "tag_cm": 20.0, "pos": [0.0, -0.16, -4.00], "rot": [0, 0, 0]},
+    {"material": "grid_off15", "sx": 1.41, "sy": 0.825, "pos": [0.0, 2.53, -3.00], "rot": [-25, 0, 0]},
+    {"material": "vilota_logo", "sx": 0.35, "sy": 0.35, "pos": [-1.77, -5.43, -4.0], "rot": [150.6, 0, -180]}
+  ]
+}
+```
+
+Each entry:
+
+| key | required | meaning |
+|---|---|---|
+| `material` | yes | one of `aprilgrid`, `grid_off14`, `grid_off15`, `grid_off16`, `grid_2x2`, `grid_3x1`, `grid_3x3`, `vilota_logo` |
+| `pos` | yes | `[x, y, z]` in metres, Polyscope world frame |
+| `rot` | no | `[rx, ry, rz]` in degrees, default `[0, 0, 0]` |
+| `tag_cm` | one of | tag side in cm. The board's half extents follow from it. |
+| `sx`, `sy` | one of | half extents in metres, for anything that is not a board. A 4×7 board with 30 cm tags is `sx 1.41, sy 0.825`. |
+| `_note` | no | ignored |
+
+Two facts about the geometry:
+
+* **The four 4×7 materials carry the same 28 tag ids, 0 to 27, in different orders.** `aprilgrid` is row-major. `grid_off14` interleaves as `[0, 14, 1, 15, ...]`, `grid_off15` as `[0, 15, 1, 16, ...]`, `grid_off16` as `[0, 16, 1, 17, ...]`. The detector tells boards apart by **tag adjacency**, not by id range, so all four fit inside tag16h5's 30 ids. Do not declare a 3×3 with ids 0 to 8: its adjacency pairs collide with `aprilgrid` and the detector aborts at startup with an empty bag.
+* **A board is drawn 1.25 m from its `pos` along its local z.** The quad's local vertices sit at z = 2.5, scaled by `sz = 0.5`. A board at `pos z = -4.0` is drawn at `z = -2.75`. The orbit generator uses the drawn position. Place boards by looking, not by arithmetic on `pos`.
+
+The verified 31 Aug 2026 launch command — scene-JSON mode, all four cameras:
+
+```bash
+cd <3dgrut-NVR>
+source .venv/bin/activate
+PLAYGROUND_BOARDS=1 BOARD_SCENE=office_scene_v9.json ORBIT_TARGET=grid_off14 \
+ORBIT_DIST=2.5 ARM_REACH=0.5 AIM_SCALE=0.9 AIM_SCALE_KB4=1.3 \
+__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  python playground.py --gs_object ply_files/room.ply 2>&1 | tee /tmp/pg.log
+```
+
+Startup prints one `[playground]` line per board with its `pos`, `rot`, `sx`, `sy`. Check them against the scene file.
+
+For CamD only, add `ORBIT_CAMS=3`. The orbit then aims every pose for CamD (756 poses instead of 1296), and the render takes about six minutes instead of ten. All four image topics are still written. Solve with `--cam-types ds` on a CamD-only bag ([step 4](#step-4--relabel-detect-solve)).
+
+### The orbit controls
+
+All are environment variables. Unset means the original behaviour.
+
+| variable | default | what it does |
+|---|---|---|
+| `PLAYGROUND_BOARDS` | unset | `1` spawns the board materials and enables `BOARD_SCENE`. |
+| `BOARD_SCENE` | unset | path to the scene JSON. |
+| `ORBIT_TARGET` | `grid_off14`, then `aprilgrid`, then `Quad` | which primitive the orbit aims at. Its drawn centre is the aim point for every pose. |
+| `ORBIT_DIST` | `0.5×` and `0.9×` board width | mean eye distance from the target board in metres. `2.5` gives an eye about 1.9 m in front. |
+| `ARM_REACH` | unset, no clamp | clamps every viewpoint into a box of ±R m around their centroid. `0.5` models the arm's reach. |
+| `AIM_SCALE` | `1.0` | multiplies every yaw and pitch in the CamD (Double Sphere) aim grid. |
+| `AIM_SCALE_KB4` | `= AIM_SCALE` | same for CamA, B, C. The KB4 grid is narrower, so it needs a larger value to reach the corners. |
+| `ORBIT_CAMS` | `0,1,2,3` | which cameras get aimed poses. `3` is CamD only. |
+| `ORBIT_FLIP` | unset | **do not set.** It puts the camera behind the boards. See troubleshooting. |
+
+Why the defaults are not right for three boards: the stock orbit was written to hug one board at half a metre, with swings of ±78° for CamD so the board reaches the image corners. At three metres the same swing throws the boards to the fisheye edge where the tags fall below the detector floor. `ORBIT_DIST` moves the eye back, `AIM_SCALE` narrows the swing to match, and `ARM_REACH` keeps the eye inside what an arm can do.
+
+One default has moved since that table was written: with `ORBIT_TARGET` unset the orbit now frames all boards together, per [the default layout](#the-default-layout). Setting `ORBIT_TARGET` restores the single-board aim the table describes.
+
+### Verified result, 31 Aug 2026
+
+Scene `office_scene_v9.json`, the four-camera launch command above, one render, one solve. Device file `DP180IP-30020104.json`.
+
+| cam | model | $f_x$ file → fitted | error | $k_1$ or $\xi$ file → fitted | error | $\alpha$ error | reprojection |
+|---|---|---|---|---|---|---|---|
+| A | KB4 | 392.654 → 392.396 | 0.066 % | 0.372462 → 0.373208 | 0.20 % | — | 0.447 px |
+| B | KB4 | 397.357 → 397.050 | 0.077 % | 0.355063 → 0.355198 | 0.04 % | — | 0.452 px |
+| C | KB4 | 399.369 → 399.057 | 0.078 % | 0.356578 → 0.357312 | 0.21 % | — | 0.450 px |
+| D | DS | 432.070 → 432.205 | 0.031 % | −0.3015 → −0.300464 | 0.34 % | 0.002 % | 0.436 px |
+
+Principal points within 0.9 px on every camera. FOV gate passed on all four. 588 932 corners, 0 of 8 218 poses rejected, 16 of 16 iterations converged.
+
+For CamD the whole projection curve agrees to within 0.26 px: at every angle off the optical axis, the recovered model and the true model place the ray within a quarter pixel of each other, and within 0.03 px inside 50°. That number is smaller than the solver's own reprojection error, so the disagreement is below what the measurement can resolve.
 
 ## Rendering for VIO runs
 
