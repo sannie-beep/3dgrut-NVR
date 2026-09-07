@@ -155,21 +155,109 @@ def board_half_extents(name, tag_cm):
     return None
 
 
+# Vertical spacing of the default scene. The GUI's Square size box defaults to
+# 15 cm, and resizing scales a board in place, so the spawn positions must
+# already leave room for boards at that size: neighbours are spaced by the
+# tallest board's height at LAYOUT_SQUARE_CM plus VERTICAL_GAP_FRACTION of it
+# as clear gap. (The old angular layout spaced for the 5.173 cm spawn size;
+# resized to 15 cm, neighbours overlapped ~0.41 m in y and near boards hid
+# far ones, the v2 "off14 hid base" failure.)
+LAYOUT_SQUARE_CM = 15.0
+VERTICAL_GAP_FRACTION = 0.2
+
+
+def board_size_m(name, square_cm):
+    """Full (width, height) of a board in metres at the given tag square."""
+    half = board_half_extents(name, square_cm)
+    if half is None:
+        raise ValueError(f"{name} is not in BOARD_SPECS")
+    return 2.0 * half[0], 2.0 * half[1]
+
+
+def vertical_step(names, square_cm=LAYOUT_SQUARE_CM):
+    """Centre-to-centre vertical offset that keeps neighbours clear."""
+    tallest = max(board_size_m(n, square_cm)[1] for n in names)
+    return tallest * (1.0 + VERTICAL_GAP_FRACTION)
+
+
+def layout_positions(names, tag_cm, near, span,
+                     up_i=1, up_s=1.0, fw_i=2, fw_s=-1.0,
+                     square_cm=LAYOUT_SQUARE_CM):
+    """Default-scene placement, pure so tests can run it without the engine.
+
+    Boards stack vertically around 0 with vertical_step() between centres
+    (first board at the bottom) and stagger in depth exactly as before:
+    board i sits at near * (1 + span * i/(n-1)).
+    Returns [(name, [x, y, z])].
+    """
+    n = len(names)
+    step = vertical_step(names, square_cm)
+    placed = []
+    for i, name in enumerate(names):
+        frac = 0.0 if n == 1 else i / (n - 1)
+        dist = near * (1.0 + span * frac)
+        pos = [0.0, 0.0, 0.0]
+        pos[fw_i] = fw_s * dist
+        pos[up_i] = up_s * step * (i - (n - 1) / 2.0)
+        placed.append((name, pos))
+    return placed
+
+
+def board_aabbs(placed, square_cm, up_i=1, fw_i=2):
+    """Face-on 2D AABBs, one per placed board, at the given square size.
+
+    Projects onto the plane orthogonal to the forward axis - the plane the
+    rig actually sees. Boards all share the side coordinate, so an overlap
+    here means one board hides another from the view line.
+    Returns [(name, (side_min, up_min), (side_max, up_max))].
+    """
+    side_i = 3 - up_i - fw_i
+    out = []
+    for name, pos in placed:
+        w, h = board_size_m(name, square_cm)
+        out.append((name, (pos[side_i] - w / 2.0, pos[up_i] - h / 2.0),
+                          (pos[side_i] + w / 2.0, pos[up_i] + h / 2.0)))
+    return out
+
+
+def check_layout_no_overlap(names, tag_cm=5.173, near=None, span=0.6,
+                            square_cm=LAYOUT_SQUARE_CM):
+    """Raise if any two boards would overlap face-on at square_cm.
+
+    Uses the same layout_positions the spawner uses. Returns the AABBs so
+    tests can also assert on the actual gaps. No renders involved.
+    """
+    if near is None:
+        near = 0.20 * tag_cm
+    placed = layout_positions(names, tag_cm, near, span, square_cm=square_cm)
+    aabbs = board_aabbs(placed, square_cm)
+    for i in range(len(aabbs)):
+        for j in range(i + 1, len(aabbs)):
+            (na, amin, amax), (nb, bmin, bmax) = aabbs[i], aabbs[j]
+            if all(amin[k] < bmax[k] and bmin[k] < amax[k] for k in range(2)):
+                raise AssertionError(
+                    f"{na} and {nb} overlap face-on at {square_cm} cm "
+                    f"squares: {amin}..{amax} vs {bmin}..{bmax}")
+    return aabbs
+
+
 def spawn_scene(engine, primitive_type, device):
     """Place boards at different heights AND different distances.
 
-    Positions are angles off the optical axis, not metres, so the layout holds
-    at any tag size. The near distance defaults to about 0.2 * tag_cm metres,
-    which is where a tag still spans roughly 20 px on a 393 px focal camera.
-    Board height and distance then scale together, so the angular size of a
-    board stays near 7.8 degrees whatever size you pick.
+    Boards stack vertically with vertical_step() between centres, sized so
+    that even after the GUI resizes every board to LAYOUT_SQUARE_CM squares
+    the boards stay clear of each other face-on (see check_layout_no_overlap).
+    Depth staggers as before: the near distance defaults to about
+    0.2 * tag_cm metres, the far board sits at near * (1 + span).
 
     Environment:
         PLAYGROUND_BOARDS   1, a comma separated list of names, or 'all'
         BOARD_TAG_CM        tag pitch. Default 5.173, the rig's real size
         BOARD_DISTANCE      near distance in metres. Default 0.2 * BOARD_TAG_CM
         BOARD_DEPTH_SPAN    far board sits at distance * (1 + this). Default 0.6
-        BOARD_ANGLES        degrees off axis, one per board. Default -22,0,22
+        BOARD_ANGLES        degrees off axis, one per board. Setting this
+                            restores the old angular layout, which overlaps
+                            once boards are resized to 15 cm squares
         BOARD_UP_AXIS       default y
         BOARD_FWD_AXIS      default -z
     """
@@ -197,24 +285,33 @@ def spawn_scene(engine, primitive_type, device):
     n = len(names)
     raw = os.environ.get("BOARD_ANGLES")
     if raw:
+        # Old angular layout, kept as an explicit override.
         angles = [float(a) for a in raw.split(",")]
-    elif n == 1:
-        angles = [0.0]
+        angles = (angles + [0.0] * n)[:n]
+        placed = []
+        for i, (name, ang) in enumerate(zip(names, angles)):
+            frac = 0.0 if n == 1 else i / (n - 1)
+            dist = near * (1.0 + span * frac)
+            pos = [0.0, 0.0, 0.0]
+            pos[fw_i] = fw_s * dist
+            pos[up_i] = up_s * dist * math.tan(math.radians(ang))
+            placed.append((name, pos))
+        print(f"[playground] BOARD_ANGLES set: angular layout, overlaps at "
+              f"{LAYOUT_SQUARE_CM:.0f} cm squares")
     else:
-        angles = [-22.0 + 44.0 * i / (n - 1) for i in range(n)]
-    angles = (angles + [0.0] * n)[:n]
+        placed = layout_positions(names, tag_cm, near, span,
+                                  up_i=up_i, up_s=up_s, fw_i=fw_i, fw_s=fw_s)
 
+    step = vertical_step(names)
     print(f"[playground] {n} board(s), tag {tag_cm:.3f} cm, "
-          f"near {near:.2f} m, far {near * (1 + span):.2f} m")
+          f"near {near:.2f} m, far {near * (1 + span):.2f} m, "
+          f"vertical step {step:.2f} m (clear up to "
+          f"{LAYOUT_SQUARE_CM:.0f} cm squares)")
 
-    for i, (name, ang) in enumerate(zip(names, angles)):
+    for name, pos in placed:
         if name not in engine.primitives.registered_materials:
             print(f"[playground]   skip {name}, no such material")
             continue
-        # Nearest board at the bottom, farthest at the top.
-        frac = 0.0 if n == 1 else i / (n - 1)
-        dist = near * (1.0 + span * frac)
-
         before = set(engine.primitives.objects)
         engine.primitives.add_primitive(
             geometry_type="Quad", primitive_type=primitive_type,
@@ -225,15 +322,12 @@ def spawn_scene(engine, primitive_type, device):
             continue
         obj = engine.primitives.objects[added.pop()]
 
-        pos = [0.0, 0.0, 0.0]
-        pos[fw_i] = fw_s * dist
-        pos[up_i] = up_s * dist * math.tan(math.radians(ang))
         obj.transform.tx, obj.transform.ty, obj.transform.tz = pos
 
         size = board_half_extents(name, tag_cm)
         if size is not None:
             obj.transform.sx, obj.transform.sy = size
-        print(f"[playground]   {name:<12} d {dist:5.2f} m  {ang:+6.1f} deg  "
+        print(f"[playground]   {name:<12} "
               f"({pos[0]:+.2f}, {pos[1]:+.2f}, {pos[2]:+.2f})"
               + (f"  sx {size[0]:.4f} sy {size[1]:.4f}" if size else "  (size by hand)"))
 
