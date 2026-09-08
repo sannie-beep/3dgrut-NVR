@@ -288,8 +288,6 @@ class Playground:
     def _draw_preset_settings_widget(self):
         psim.SetNextItemOpen(True, psim.ImGuiCond_FirstUseEver)
         if psim.TreeNode("Quick Settings"):
-            psim.PushItemWidth(150)
-
             if (psim.Button("Fast")):
                 self.engine.use_spp = False
                 self.engine.antialiasing_mode = '4x MSAA'
@@ -317,7 +315,6 @@ class Playground:
                 self.engine.use_optix_denoiser = True
                 self.is_force_canvas_dirty = True
 
-            psim.PushItemWidth(150)
             psim.TreePop()
 
     def _draw_render_widget(self):
@@ -529,7 +526,6 @@ class Playground:
 
                 psim.TreePop()
 
-            psim.PopItemWidth()
             psim.TreePop()
 
     def add_cam_to_vid_recorder(self, index):
@@ -585,12 +581,12 @@ class Playground:
                 psim.Text("No .json files in ./calibration_files/")
 
             _, self.novel_view_renderer.calibration_filename = psim.InputText(
-                "Calibration Path (relative to root)",
+                "Calib path",
                 self.novel_view_renderer.calibration_filename
             )
             self.novel_view_renderer.set_filepath()
             calibration_path = self.novel_view_renderer.calibration_fullpath
-            psim.Text(f"Calibration file will be loaded from:{calibration_path}")
+            psim.TextWrapped(f"Loads from: {calibration_path}")
 
             # Disable "Load Calibration" button if calibration is already loaded
             psim.BeginDisabled(self.calibration_loaded == True)
@@ -630,7 +626,7 @@ class Playground:
                         self._novel_view_calib_status = f"{e}"
             # Always display the status message if present
             if self._novel_view_calib_status:
-                psim.Text(self._novel_view_calib_status)
+                psim.TextWrapped(self._novel_view_calib_status)
             
             
             if getattr(self, "selected_camera_idx", None) is None:
@@ -668,11 +664,12 @@ class Playground:
 
                 if psim.TreeNode("Save/Load Video trajectory"):
                     if self._trajectory_status:
-                        psim.Text(self._trajectory_status)
+                        psim.TextWrapped(self._trajectory_status)
                     _, self.novel_view_renderer.trajectory_filename = psim.InputText(
-                        "Trajectory filename (in ./video_trajectories)",
+                        "Trajectory file",
                         self.novel_view_renderer.trajectory_filename
                     )
+                    psim.TextWrapped("in ./video_trajectories/")
                     if not self.trajectory_loaded and psim.Button("Load Trajectory"):
                         try:
                             self.novel_view_renderer.set_trajectory_filepath()
@@ -904,7 +901,7 @@ class Playground:
                     self.slice_planes[sp_idx].set_pose(self.slice_plane_pos[sp_idx], self.slice_plane_normal[sp_idx])
                 any_plane_changed |= changed
 
-                psim.PushItemWidth(350)
+                psim.PushItemWidth(psim.GetContentRegionAvail()[0] * 0.65)
                 changed, values = psim.SliderFloat3(
                     f"SPPos{sp_idx}",
                     [self.slice_plane_pos[sp_idx][0], self.slice_plane_pos[sp_idx][1], self.slice_plane_pos[sp_idx][2]],
@@ -1010,6 +1007,7 @@ class Playground:
                 psim.ProgressBar(fraction=self.engine.spp.spp_accumulated_for_frame / self.engine.spp.spp,
                                  size_arg=(progress_width, 0))
 
+            psim.PopItemWidth()
             psim.TreePop()
 
     def _draw_depth_of_field_widget(self):
@@ -1076,8 +1074,6 @@ class Playground:
                     self._draw_transform_widget(obj)
                     psim.TreePop()
             psim.TreePop()
-
-        psim.PopItemWidth()
 
         for obj_name in removed_objs:
             self.primitives.remove_primitive(obj_name)
@@ -1374,7 +1370,7 @@ class Playground:
             psim.TextDisabled(sized[2] if sized else "no texture")
 
             # SLIDERS RESTORED
-            psim.PushItemWidth(350)
+            psim.PushItemWidth(psim.GetContentRegionAvail()[0] * 0.65)
             changed, values = psim.SliderFloat3(
                 "Translate",
                 [object_transform.tx, object_transform.ty, object_transform.tz],
@@ -1681,6 +1677,9 @@ class Playground:
     @torch.cuda.nvtx.range("ps_ui_callback")
     def ps_ui_callback(self):
         """ Polyscope custom UI callback - used to draw gui menu"""
+        # Default widget width: half the panel, so labels keep the other
+        # half instead of being truncated by ImGui's window-based default.
+        psim.PushItemWidth(max(psim.GetContentRegionAvail()[0] * 0.5, 200.0))
         self._draw_preset_settings_widget()
         psim.Separator()
         self._draw_render_widget()
@@ -1698,7 +1697,7 @@ class Playground:
         self._draw_materials_widget()
         psim.Separator()
         self._draw_primitives_widget()
-        
+        psim.PopItemWidth()
 
         # Finally refresh the canvas by rendering the next pass, if needed
         if self.live_update:
