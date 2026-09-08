@@ -109,8 +109,15 @@ class Playground:
         ps.set_max_fps(-1)
         ps.set_background_color((0., 0., 0.))
         ps.set_ground_plane_mode("none")
-        ps.set_window_resizable(False)
-        ps.set_window_size(1280, 800)
+        # PLAYGROUND_WIN=WxH overrides the default window size. The window
+        # stays user-resizable; nothing re-forces its size per frame any more.
+        try:
+            win_w, win_h = (int(v) for v in
+                            os.environ.get("PLAYGROUND_WIN", "").lower().split("x"))
+        except ValueError:
+            win_w, win_h = 1600, 1000
+        ps.set_window_resizable(True)
+        ps.set_window_size(win_w, win_h)
         ps.set_give_focus_on_show(True)
         ps.set_automatically_compute_scene_extents(False)
         ps.set_bounding_box(np.array([-1.5, -1.5, -1.5]), np.array([1.5, 1.5, 1.5]))
@@ -152,8 +159,13 @@ class Playground:
         if self.novel_view_renderer.is_loaded():
             camera = self.novel_view_renderer.get_camera_at_index(self.selected_camera_idx)
             window_w, window_h = camera.width, camera.height
-        
-        ps.set_window_size(window_w, window_h)
+
+        # No ps.set_window_size here: the render buffers are sized from the
+        # camera above, so the output stays camera-exact and the fullscreen
+        # image quantity stretches to whatever window the user chose. The
+        # per-frame resize used to snap the OS window to the camera
+        # resolution and made it impossible to resize. A one-shot snap
+        # remains in the "Fly to" paths (_snap_window_to_camera).
         # Update polyscope camera with params from gui
         view_params = ps.CameraParameters(
             ps.CameraIntrinsics(fov_vertical_deg=self.engine.camera_fov, aspect=window_w / window_h),
@@ -1531,6 +1543,12 @@ class Playground:
         # matrices in novel_view_renderer and does not call look_at_dir.
         return eye, eye - rot[2, :], -rot[1, :]
 
+    def _snap_window_to_camera(self, cam):
+        """One-shot window resize to the camera's native resolution, so the
+        fullscreen render preview maps 1:1 right after a Fly to. The window
+        stays resizable and nothing re-forces the size afterwards."""
+        ps.set_window_size(int(cam.width), int(cam.height))
+
     def _draw_single_vk_cam(self, i, cam: DistortionCamera):
         view_params = polyscope_from_kaolin_camera(cam)
         eye = view_params.get_position()
@@ -1542,6 +1560,7 @@ class Playground:
         if (psim.Button(f"Fly to")):
             if getattr(self, "flyto_relative", False):
                 eye, target, up = self._relative_fly_target(i)
+            self._snap_window_to_camera(cam)
             ps.look_at_dir(eye, target, up, fly_to=True)
 
         xi_alpha = "Not Fisheye"
@@ -1577,6 +1596,7 @@ class Playground:
         target = view_params.get_position() + view_params.get_look_dir()
         # OpenCV +y is DOWN, Polyscope wants UP. Preview only: the render builds its own matrices in novel_view_renderer.
         up = -view_params.get_up_dir()
+        self._snap_window_to_camera(cam)
         ps.look_at_dir(eye, target, up, fly_to=True)
 
     def _draw_cam_trajectory_view(self, poses_list):
