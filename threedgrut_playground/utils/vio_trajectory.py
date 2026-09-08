@@ -2,9 +2,10 @@
 
 Builds a smooth (C3 at every point, including the stationary-to-motion
 boundary) rig path around the boards for rendering VIO input bags, and
-exports the exact per-frame ground truth. Selected from the GUI's Build
-Orbit Trajectory button by setting VIO_TRAJ=1; the orbit generator is
-untouched otherwise.
+exports the exact per-frame ground truth. Selected from the GUI's
+"Trajectory type" combo next to the Build Trajectory button (VIO_TRAJ=1
+only presets the combo to this path); the orbit generator is untouched
+otherwise.
 
 The path: STATIONARY_LEAD_S seconds parked at the initial pose, then a
 speed ramp (integrated quintic smoothstep, so position is C3 across the
@@ -33,7 +34,9 @@ Ground truth npz (ate_compare.py's npz layout - keys t_ns, p, q_xyzw):
 
 Environment (existing orbit knobs ORBIT_TARGET / ORBIT_DIST / ORBIT_FLIP
 keep working; ARM_REACH is ignored here because clamping breaks C2):
-  VIO_TRAJ=1           build this path instead of the orbit
+  VIO_TRAJ=1           GUI: preset the Trajectory-type combo to this path;
+                       headless build_orbit_trajectory(vio=None): build this
+                       path instead of the orbit
   STATIONARY_LEAD_S    parked lead, default 3.0 s
   VIO_MOTION_S         motion phase, default 40 s (min: one distance cycle)
   VIO_FPS              frame rate, default 20 (also sets PLAYGROUND_FPS so
