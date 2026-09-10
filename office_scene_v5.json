@@ -1,0 +1,65 @@
+{
+  "boards": [
+    {
+      "material": "aprilgrid",
+      "tag_cm": 7.5,
+      "pos": [
+        0.0,
+        -0.6,
+        -1.9
+      ],
+      "rot": [
+        20,
+        0,
+        0
+      ],
+      "_note": "near, 1 m real, 7.5 cm tags"
+    },
+    {
+      "material": "grid_off14",
+      "tag_cm": 7.5,
+      "pos": [
+        0.0,
+        -0.08,
+        -2.9
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ],
+      "_note": "mid, 3 m real, 7.5 cm tags"
+    },
+    {
+      "material": "grid_off15",
+      "tag_cm": 15.0,
+      "pos": [
+        0.0,
+        1.26,
+        -4.9
+      ],
+      "rot": [
+        -15,
+        0,
+        0
+      ],
+      "_note": "far, 7 m real, 15 cm tags"
+    },
+    {
+      "material": "vilota_logo",
+      "sx": 0.35,
+      "sy": 0.35,
+      "pos": [
+        -1.7673,
+        -5.4346,
+        -4.0
+      ],
+      "rot": [
+        150.612,
+        0,
+        -180
+      ],
+      "_note": "logo"
+    }
+  ]
+}

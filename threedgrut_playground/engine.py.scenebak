@@ -762,8 +762,13 @@ class Engine3DGRUT:
         # PLAYGROUND_BOARDS=1 spawns one quad per rig board plus the logo.
         # They all spawn at the origin, so move them apart in the GUI.
         if os.environ.get('PLAYGROUND_BOARDS'):
-            from threedgrut_playground.utils.boards import spawn_scene
-            spawn_scene(self, OptixPrimitiveTypes.DIFFUSE, self.device)
+            from threedgrut_playground.utils.boards import BOARD_NAMES
+            for _n in BOARD_NAMES:
+                if _n in self.primitives.registered_materials:
+                    self.primitives.add_primitive(
+                        geometry_type='Quad',
+                        primitive_type=OptixPrimitiveTypes.DIFFUSE,
+                        device=self.device, material_name=_n)
         else:
             self.primitives.add_primitive(
                 geometry_type='Quad', primitive_type=OptixPrimitiveTypes.DIFFUSE, device=self.device

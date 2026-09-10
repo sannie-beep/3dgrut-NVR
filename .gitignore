@@ -45,3 +45,10 @@ playground/assets/
 video_trajectories/*.csv
 *.csv
 *.png
+bgr_image.npy
+calibration-*.json
+plot-*.json
+mcap_outputs/
+*.mcap
+__pycache__/
+__pycache__/
